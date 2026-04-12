@@ -1,0 +1,12 @@
+# Runtime data
+Optimizerlist/
+ItemOptimizer_config.xml
+barotrauma_items.db
+
+# Build output
+bin/
+obj/
+
+# IDE
+.vs/
+*.user
