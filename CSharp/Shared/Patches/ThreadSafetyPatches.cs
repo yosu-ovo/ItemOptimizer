@@ -1,7 +1,8 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Threading;
 using Barotrauma;
 using Barotrauma.Items.Components;
@@ -27,9 +28,6 @@ namespace ItemOptimizerMod.Patches
         private static readonly ThreadLocal<Random> WorkerRandom =
             new(() => new Random(Environment.CurrentManagedThreadId * 31 + Environment.TickCount));
 
-        // ── Deferred sound queue (client only) ──
-        private static readonly ConcurrentQueue<Action> DeferredSounds = new();
-
         // ── Registration state ──
         private static bool _registered;
         private static readonly List<(MethodBase original, MethodInfo patch)> _appliedPatches = new();
@@ -41,10 +39,15 @@ namespace ItemOptimizerMod.Patches
         {
             if (_registered) return;
 
-            // ── Rand.GetRNG ──
-            PatchPrefix(harmony, typeof(Rand), "GetRNG",
-                new[] { typeof(Rand).GetNestedType("RandSync") },
-                nameof(RandGetRNGPrefix));
+            // ── Rand.GetRNG — transpiler to avoid per-call Harmony overhead ──
+            var getRNG = AccessTools.Method(typeof(Rand), "GetRNG",
+                new[] { typeof(Rand).GetNestedType("RandSync") });
+            if (getRNG != null)
+            {
+                var transpiler = new HarmonyMethod(typeof(ThreadSafetyPatches), nameof(RandGetRNGTranspiler));
+                harmony.Patch(getRNG, transpiler: transpiler);
+                _appliedPatches.Add((getRNG, AccessTools.Method(typeof(ThreadSafetyPatches), nameof(RandGetRNGTranspiler))));
+            }
 
             // ── DurationList: StatusEffect.Apply (2 overloads) ──
             PatchLock(harmony, typeof(StatusEffect), "Apply",
@@ -67,8 +70,9 @@ namespace ItemOptimizerMod.Patches
             PatchPostfix(harmony, typeof(StatusEffect), "StopAll", Type.EmptyTypes, nameof(StopAllPostfix));
 
             // ── DurationList: PropertyConditional.Matches ──
-            PatchLock(harmony, typeof(PropertyConditional), "Matches",
-                new[] { typeof(ISerializableEntity) }, DurationLock);
+            // REMOVED: No longer needed. HasStatusTagCachePatch.PreBuildAll() pre-populates
+            // the cache before parallel dispatch, so TryGetCached does lock-free dictionary reads.
+            // Non-HasStatusTag Matches calls don't access DurationList at all.
 
             // ── DurationList: CharacterHealth.GetPredictedStrength ──
             // Method signature: GetPredictedStrength(AfflictionPrefab prefab, float knownStrength, IReadOnlyList<Affliction> currentAfflictions)
@@ -118,16 +122,15 @@ namespace ItemOptimizerMod.Patches
             PatchLock(harmony, typeof(Item), "UpdatePendingConditionUpdates",
                 new[] { typeof(float) }, ConditionLock);
 
-            // ── Item.HasTag — thread-safe redirect ──
-            // Item.HasTag() reads a private HashSet<Identifier> (non-thread-safe).
-            // On worker threads, skip the HashSet and use only Prefab.Tags (ImmutableHashSet).
-            // This fixes crashes from any mod (e.g. DDA SpritePatch) calling HasTag on workers.
+            // ── Item.HasTag — thread-safe redirect via TRANSPILER ──
+            // During parallel dispatch, redirects to Prefab.Tags (ImmutableHashSet).
+            // Transpiler avoids per-call Harmony dispatch overhead (~0.5us) on this very hot path.
             var hasTagSingle = AccessTools.Method(typeof(Item), "HasTag", new[] { typeof(Identifier) });
             if (hasTagSingle != null)
             {
-                var prefix = new HarmonyMethod(typeof(ThreadSafetyPatches), nameof(HasTagPrefix));
-                harmony.Patch(hasTagSingle, prefix: prefix);
-                _appliedPatches.Add((hasTagSingle, AccessTools.Method(typeof(ThreadSafetyPatches), nameof(HasTagPrefix))));
+                var transpiler = new HarmonyMethod(typeof(ThreadSafetyPatches), nameof(HasTagTranspiler));
+                harmony.Patch(hasTagSingle, transpiler: transpiler);
+                _appliedPatches.Add((hasTagSingle, AccessTools.Method(typeof(ThreadSafetyPatches), nameof(HasTagTranspiler))));
             }
 
             // ── Sound.Play overloads (client only) ──
@@ -148,12 +151,111 @@ namespace ItemOptimizerMod.Patches
         }
 
         // ────────────────────────────────────────────────────────────
-        //  Rand.GetRNG Prefix
+        //  Rand.GetRNG — Transpiler + helper
+        // ────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Injects at method start:
+        ///   Random r = RandGetRNGTryIntercept(randSync);
+        ///   if (r != null) return r;
+        /// </summary>
+        public static IEnumerable<CodeInstruction> RandGetRNGTranspiler(
+            IEnumerable<CodeInstruction> instructions, ILGenerator generator)
+        {
+            var skipLabel = generator.DefineLabel();
+
+            yield return new CodeInstruction(OpCodes.Ldarg_0);  // randSync (static method, arg0)
+            yield return new CodeInstruction(OpCodes.Call,
+                AccessTools.Method(typeof(ThreadSafetyPatches), nameof(RandGetRNGTryIntercept)));
+            yield return new CodeInstruction(OpCodes.Dup);
+            yield return new CodeInstruction(OpCodes.Brfalse_S, skipLabel);
+            yield return new CodeInstruction(OpCodes.Ret);
+
+            var originalInstructions = instructions.ToList();
+            var popInstr = new CodeInstruction(OpCodes.Pop);
+            popInstr.labels.Add(skipLabel);
+            yield return popInstr;
+
+            if (originalInstructions.Count > 0 && originalInstructions[0].labels.Count > 0)
+            {
+                popInstr.labels.AddRange(originalInstructions[0].labels);
+                originalInstructions[0].labels.Clear();
+            }
+
+            foreach (var instr in originalInstructions)
+                yield return instr;
+        }
+
+        /// <summary>
+        /// Returns a ThreadLocal Random for Unsynced on worker threads, null otherwise (fall through).
+        /// Takes int instead of RandSync to avoid boxing in transpiled IL.
+        /// </summary>
+        public static Random RandGetRNGTryIntercept(int randSync)
+        {
+            if (!UpdateAllTakeover.IsWorkerThread) return null;
+            if (randSync != 0) return null; // only intercept Unsynced (= 0)
+            return WorkerRandom.Value;
+        }
+
+        // ────────────────────────────────────────────────────────────
+        //  Item.HasTag — Transpiler + helper
+        // ────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Injects at method start:
+        ///   int r = HasTagTryIntercept(this, tag);
+        ///   if (r >= 0) return r != 0;
+        /// </summary>
+        public static IEnumerable<CodeInstruction> HasTagTranspiler(
+            IEnumerable<CodeInstruction> instructions, ILGenerator generator)
+        {
+            var skipLabel = generator.DefineLabel();
+
+            yield return new CodeInstruction(OpCodes.Ldarg_0);  // this (Item)
+            yield return new CodeInstruction(OpCodes.Ldarg_1);  // tag (Identifier)
+            yield return new CodeInstruction(OpCodes.Call,
+                AccessTools.Method(typeof(ThreadSafetyPatches), nameof(HasTagTryIntercept)));
+            // Stack: [int] — -1 = not handled, 0 = false, 1 = true
+            yield return new CodeInstruction(OpCodes.Dup);
+            yield return new CodeInstruction(OpCodes.Ldc_I4_0);
+            yield return new CodeInstruction(OpCodes.Blt_S, skipLabel);  // if < 0, skip to original
+            // Convert int to bool and return
+            yield return new CodeInstruction(OpCodes.Ldc_I4_0);
+            yield return new CodeInstruction(OpCodes.Cgt);
+            yield return new CodeInstruction(OpCodes.Ret);
+
+            var originalInstructions = instructions.ToList();
+            var popInstr = new CodeInstruction(OpCodes.Pop);
+            popInstr.labels.Add(skipLabel);
+            yield return popInstr;
+
+            if (originalInstructions.Count > 0 && originalInstructions[0].labels.Count > 0)
+            {
+                popInstr.labels.AddRange(originalInstructions[0].labels);
+                originalInstructions[0].labels.Clear();
+            }
+
+            foreach (var instr in originalInstructions)
+                yield return instr;
+        }
+
+        /// <summary>
+        /// During parallel dispatch, uses Prefab.Tags (ImmutableHashSet) for thread safety.
+        /// Returns -1 when not intercepting (DispatchActive is false).
+        /// </summary>
+        public static int HasTagTryIntercept(Item item, Identifier tag)
+        {
+            if (!UpdateAllTakeover.DispatchActive) return -1;
+            return item.Prefab.Tags.Contains(tag) ? 1 : 0;
+        }
+
+        // ────────────────────────────────────────────────────────────
+        //  LEGACY prefixes — kept for reference but no longer registered
         // ────────────────────────────────────────────────────────────
         public static bool RandGetRNGPrefix(ref Random __result, object randSync)
         {
             // RandSync.Unsynced = 0
-            if (!ParallelDispatchPatch.IsWorkerThread) return true;
+            if (!UpdateAllTakeover.IsWorkerThread) return true;
             if ((int)randSync != 0) return true; // only intercept Unsynced
 
             __result = WorkerRandom.Value;
@@ -170,7 +272,7 @@ namespace ItemOptimizerMod.Patches
             // instance HashSet. Once a HashSet is corrupted by concurrent access,
             // even single-threaded reads crash — so we must isolate ALL access
             // during the parallel window, not just worker-thread access.
-            if (!ParallelDispatchPatch._dispatchActive) return true;
+            if (!UpdateAllTakeover.DispatchActive) return true;
 
             __result = __instance.Prefab.Tags.Contains(tag);
             return false;
@@ -228,33 +330,16 @@ namespace ItemOptimizerMod.Patches
 
         public static bool SoundPlayPrefix(ref object __result)
         {
-            if (!ParallelDispatchPatch.IsWorkerThread) return true;
+            if (!UpdateAllTakeover.IsWorkerThread) return true;
 
             // On worker thread: skip sound play, return null SoundChannel
             __result = null;
             return false;
         }
 
-        /// <summary>Drain the deferred sound queue on the main thread.</summary>
-        internal static void FlushDeferredSounds()
-        {
-            while (DeferredSounds.TryDequeue(out var action))
-            {
-                try { action(); }
-                catch { /* ignore sound errors */ }
-            }
-        }
-
         // ────────────────────────────────────────────────────────────
         //  Generic Monitor lock Prefix/Postfix generators
         // ────────────────────────────────────────────────────────────
-
-        // We use a dictionary to map lock objects so the generic prefix/postfix can find the right lock.
-        // For simplicity, we generate named methods via delegates.
-        // Instead, we use a simpler approach: thread-local lock stack.
-        [ThreadStatic] private static Stack<object> _lockStack;
-
-        private static Stack<object> LockStack => _lockStack ??= new Stack<object>(4);
 
         // Named prefixes/postfixes for each lock type
         public static void DurationLockPrefix() { Monitor.Enter(DurationLock); }
