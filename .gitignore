@@ -10,3 +10,6 @@ obj/
 # IDE
 .vs/
 *.user
+
+# Internal docs (dev notes, not shipped)
+Docs/
