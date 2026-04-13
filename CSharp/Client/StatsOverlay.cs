@@ -18,7 +18,6 @@ namespace ItemOptimizerMod
 
         private static readonly Color MainThreadColor = new Color(255, 165, 0);   // Orange
         private static readonly Color WorkerColor = new Color(50, 205, 50);       // LimeGreen
-        private static readonly Color BarBgColor = new Color(40, 40, 40, 180);
 
         public static void Draw(SpriteBatch spriteBatch)
         {
@@ -26,7 +25,7 @@ namespace ItemOptimizerMod
 
             var font = GUIStyle.SmallFont;
             string title = Localization.T("mod_name");
-            string sep = "───────────────";
+            string sep = OverlayHelper.Separator;
 
             string lineCold = $"{Localization.T("strategy_cold_storage")}: ~{Stats.AvgColdStorageSkips:F0}/frame";
             string lineGnd  = $"{Localization.T("strategy_ground_item")}: ~{Stats.AvgGroundItemSkips:F0}/frame";
@@ -40,9 +39,13 @@ namespace ItemOptimizerMod
             string lineHst  = $"{Localization.T("stats_hst_cache")}: ~{Stats.AvgHasStatusTagCacheHits:F0}/frame";
             string lineShud = $"{Localization.T("stats_statushud")}: ~{Stats.AvgStatusHUDSkips:F0}/frame";
             string lineAffl = $"{Localization.T("stats_affliction")}: ~{Stats.AvgAfflictionDedupSkips:F0}/frame";
+            string lineAnimLod = $"{Localization.T("stats_anim_lod")}: ~{Stats.AvgAnimLODSkipped + Stats.AvgAnimLODHalfRate:F0}/frame";
+            string lineCharStagger = $"{Localization.T("stats_char_stagger")}: ~{Stats.AvgCharStaggerSkipped:F0}/frame";
+            string lineLadderFix = $"{Localization.T("stats_ladder_fix")}: ~{Stats.AvgLadderFixCorrections:F1}/frame";
             string lineSave = Localization.Format("stats_saved", Stats.EstimatedSavedMs());
+            string lineMiscP = $"{Localization.T("strategy_misc_parallel")}: {(OptimizerConfig.EnableMiscParallel ? "ON" : "OFF")}";
 
-            string[] lines = { title, sep, lineCold, lineGnd, lineCi, lineMot, lineWear, lineRule, lineModOpt, lineWd, lineDoor, lineHst, lineShud, lineAffl, sep, lineSave };
+            string[] lines = { title, sep, lineCold, lineGnd, lineCi, lineMot, lineWear, lineRule, lineModOpt, lineWd, lineDoor, lineHst, lineShud, lineAffl, lineAnimLod, lineCharStagger, lineLadderFix, sep, lineSave, lineMiscP };
 
             // Measure panel size
             float maxWidth = 0;
@@ -56,7 +59,7 @@ namespace ItemOptimizerMod
             totalHeight -= LineSpacing;
 
             // If parallel dispatch active, reserve space for thread bars section
-            bool showParallel = ParallelDispatchPatch.Enabled;
+            bool showParallel = UpdateAllTakeover.Enabled && OptimizerConfig.EnableParallelDispatch;
             // Use DisplayThreadCount for stable rendering (no flickering)
             int threadCount = showParallel ? Stats.DisplayThreadCount : 0;
             float parallelSectionHeight = 0;
@@ -81,8 +84,44 @@ namespace ItemOptimizerMod
                 if (barSectionWidth > maxWidth) maxWidth = barSectionWidth;
             }
 
+            // If server data available, reserve space for server section
+            bool showServer = ServerMetrics.HasServerData;
+            float serverSectionHeight = 0;
+            string serverHeader = "";
+            string serverTickLine = "";
+            string serverClientsLine = "";
+            string serverQueuesLine = "";
+            string serverSkippedLine = "";
+
+            if (showServer)
+            {
+                string healthLabel = OverlayHelper.GetHealthLabel(ServerMetrics.Health);
+
+                serverHeader = $"{Localization.T("section_server")}: {healthLabel} ({ServerMetrics.HealthScore})";
+                serverTickLine = $"  Tick: {ServerMetrics.AvgTickMs:F1}ms ({ServerMetrics.TickRate}Hz)";
+                serverClientsLine = Localization.Format("server_clients_entities",
+                    ServerMetrics.ClientCount, ServerMetrics.EntityCount);
+                serverQueuesLine = Localization.Format("server_queues",
+                    ServerMetrics.AvgPendingPos, ServerMetrics.AvgEventQueue);
+                serverSkippedLine = Localization.Format("server_skipped", ServerMetrics.SkippedItems);
+
+                float lineH = font.MeasureString(serverHeader).Y + LineSpacing;
+                serverSectionHeight = lineH * 6; // separator + header + tick + clients + queues + skipped
+
+                // Check width
+                float[] serverWidths = {
+                    font.MeasureString(serverHeader).X,
+                    font.MeasureString(serverTickLine).X,
+                    font.MeasureString(serverClientsLine).X,
+                    font.MeasureString(serverQueuesLine).X,
+                    font.MeasureString(serverSkippedLine).X
+                };
+                foreach (float w in serverWidths)
+                    if (w > maxWidth) maxWidth = w;
+            }
+
             float panelW = maxWidth + Padding * 2;
-            float panelH = totalHeight + parallelSectionHeight + Padding * 2;
+            float panelH = totalHeight + parallelSectionHeight + serverSectionHeight + Padding * 2;
             float panelX = GameMain.GraphicsWidth - panelW - Padding;
             float panelY = Padding;
 
@@ -139,7 +178,7 @@ namespace ItemOptimizerMod
                     GUI.DrawRectangle(spriteBatch,
                         new Vector2(barX, y),
                         new Vector2(BarMaxWidth, BarHeight),
-                        BarBgColor, isFilled: true);
+                        OverlayHelper.BarBgColor, isFilled: true);
 
                     // Bar fill (proportional to max)
                     float barW = Math.Max(1, (ms / maxMs) * BarMaxWidth);
@@ -173,6 +212,48 @@ namespace ItemOptimizerMod
                 GUI.DrawString(spriteBatch,
                     new Vector2(panelX + Padding, y),
                     parallelSavedLine, Color.LimeGreen, font: font);
+                y += font.MeasureString(parallelSavedLine).Y + LineSpacing;
+            }
+
+            // ── Server health section ──
+            if (showServer)
+            {
+                Color healthColor = OverlayHelper.GetHealthColor(ServerMetrics.Health);
+
+                // Separator
+                GUI.DrawString(spriteBatch,
+                    new Vector2(panelX + Padding, y),
+                    OverlayHelper.Separator, Color.White, font: font);
+                y += font.MeasureString(OverlayHelper.Separator).Y + LineSpacing;
+
+                // Header with health color
+                GUI.DrawString(spriteBatch,
+                    new Vector2(panelX + Padding, y),
+                    serverHeader, healthColor, font: font);
+                y += font.MeasureString(serverHeader).Y + LineSpacing;
+
+                // Tick
+                GUI.DrawString(spriteBatch,
+                    new Vector2(panelX + Padding, y),
+                    serverTickLine, Color.White, font: font);
+                y += font.MeasureString(serverTickLine).Y + LineSpacing;
+
+                // Clients + entities
+                GUI.DrawString(spriteBatch,
+                    new Vector2(panelX + Padding, y),
+                    serverClientsLine, Color.White, font: font);
+                y += font.MeasureString(serverClientsLine).Y + LineSpacing;
+
+                // Queues
+                GUI.DrawString(spriteBatch,
+                    new Vector2(panelX + Padding, y),
+                    serverQueuesLine, Color.White, font: font);
+                y += font.MeasureString(serverQueuesLine).Y + LineSpacing;
+
+                // Skipped items
+                GUI.DrawString(spriteBatch,
+                    new Vector2(panelX + Padding, y),
+                    serverSkippedLine, Color.White, font: font);
             }
         }
     }
