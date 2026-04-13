@@ -26,7 +26,8 @@ namespace ItemOptimizerMod.Patches
             if (counter.Value % OptimizerConfig.WearableSkipFrames != 0)
             {
                 // Still update position to follow the character
-                if (__instance.item.GetComponent<Holdable>() is not { IsActive: true })
+                var holdable = __instance.item.GetComponent<Holdable>();
+                if (holdable == null || !holdable.IsActive)
                 {
                     __instance.item.SetTransform(picker.SimPosition, 0.0f);
                 }

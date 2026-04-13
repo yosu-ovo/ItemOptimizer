@@ -6,11 +6,16 @@ using HarmonyLib;
 namespace ItemOptimizerMod.Patches
 {
     /// <summary>
-    /// Door sends state_out signal every frame and never self-deactivates.
-    /// When fully open or fully closed (idle), most of Update is wasted.
-    /// This patch throttles idle doors: skip N-1 out of N frames, replaying state_out.
-    /// Doors that are transitioning (opening/closing) always run the original.
-    /// Also detects server-pushed state changes to avoid multiplayer desync.
+    /// Door throttle patch — DISABLED BY DEFAULT.
+    ///
+    /// Analysis showed door updates are already very cheap (~0.07ms for 19 doors),
+    /// and throttling idle doors causes rubber-banding at motion-sensor-controlled
+    /// doors due to a race condition: the Prefix skips the Update, but ReceiveSignal
+    /// can change isOpen in the same frame. Since Harmony Postfix does NOT run when
+    /// Prefix returns false, there's no reliable way to detect and recover.
+    ///
+    /// The performance gain (~0.1ms) is not worth the gameplay impact.
+    /// Keeping the infrastructure in case a future need arises, but defaulting to off.
     /// </summary>
     static class DoorPatch
     {
@@ -36,15 +41,13 @@ namespace ItemOptimizerMod.Patches
             // Only throttle idle doors — NOT transitioning ones
             float openState = Ref_openState(__instance);
             bool isIdle = openState <= 0f || openState >= 1f;
-            if (!isIdle) return true; // door is moving, always run original
+            if (!isIdle) return true;
 
-            // Also skip if broken — broken doors have special logic
             if (__instance.IsBroken) return true;
 
             var state = States.GetOrCreateValue(__instance);
 
-            // Detect state change: if isOpen flipped since last recorded (server push or
-            // local interaction), force a full update to sync physics body immediately.
+            // Detect state change since last frame
             if (state.HasRecordedState)
             {
                 bool currentIsOpen = Ref_isOpen(__instance);
@@ -56,7 +59,6 @@ namespace ItemOptimizerMod.Patches
 
             if (state.FrameCounter % OptimizerConfig.DoorSkipFrames != 0)
             {
-                // Replay last state_out signal
                 if (state.LastSignal != null)
                     __instance.item.SendSignal(state.LastSignal, "state_out");
 
