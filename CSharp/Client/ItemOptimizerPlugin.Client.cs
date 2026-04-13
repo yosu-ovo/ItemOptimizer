@@ -37,6 +37,20 @@ namespace ItemOptimizerMod
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(StatusHUDPatch), nameof(StatusHUDPatch.Postfix))));
             harmony.Patch(statusHudDrawThermal,
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(StatusHUDPatch), nameof(StatusHUDPatch.DrawThermalPrefix))));
+
+            // Register client-side metric receiver for server HUD overlay
+            MetricRelayReceiver.Register();
+
+            // Animation LOD — client-only (uses camera position)
+            if (OptimizerConfig.EnableAnimLOD)
+                AnimLODPatch.Register(harmony);
+
+            // Ladder + platform desync fix — client-only (reconciliation patch)
+            // Always register; Prefix/Postfix check EnableLadderFix/EnablePlatformFix at runtime
+            LadderFixPatch.Register(harmony);
+
+            // Register client-side sync tracking receiver
+            SyncRelayReceiver.Register();
         }
 
         partial void DisposeClient()
@@ -44,6 +58,11 @@ namespace ItemOptimizerMod
             SettingsPanel.Close();
             settingsButton = null;
             StatsOverlay.Visible = false;
+            AnimLODPatch.Unregister(harmony);
+            LadderFixPatch.Unregister(harmony);
+            MetricRelayReceiver.Reset();
+            SyncRelayReceiver.Reset();
+            SyncTracker.Reset();
         }
 
         // ── Harmony Postfixes ──
@@ -83,6 +102,7 @@ namespace ItemOptimizerMod
         private static void GuiDrawPostfix(SpriteBatch spriteBatch)
         {
             StatsOverlay.Draw(spriteBatch);
+            ServerPerfOverlay.Draw(spriteBatch);
         }
 
         // ── Pause menu navigation ──
@@ -104,7 +124,7 @@ namespace ItemOptimizerMod
         {
             var children = new List<GUIComponent>();
             if (component == null) return children;
-            foreach (var child in component.GetAllChildren())
+            foreach (var child in component.Children)
                 children.Add(child);
             return children;
         }

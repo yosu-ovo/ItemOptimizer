@@ -29,10 +29,18 @@ namespace ItemOptimizerMod
         public static bool EnableMotionSensorThrottle = true;
         public static bool EnableWearableThrottle = true;
         public static bool EnableWaterDetectorThrottle = true;
-        public static bool EnableDoorThrottle = true;
+        public static bool EnableDoorThrottle = false;  // Disabled: saves only ~0.1ms but causes door rubber-banding
         public static bool EnableHasStatusTagCache = true;
         public static bool EnableStatusHUDThrottle = true;
         public static bool EnableAfflictionDedup = true;
+
+        // ── Character optimization ──
+        public static bool EnableAnimLOD = true;
+        public static bool EnableCharacterStagger = false;  // off by default — affects AI reaction time
+        public static int CharacterStaggerGroups = 3;       // 2-8
+        public static bool EnableLadderFix = true;          // fix ladder climbing desync (client-only)
+        public static bool EnablePlatformFix = true;        // fix IgnorePlatforms desync (client-only)
+
         public static int MotionSensorSkipFrames = 3;
         public static int WearableSkipFrames = 3;
         public static int WaterDetectorSkipFrames = 3;
@@ -40,13 +48,21 @@ namespace ItemOptimizerMod
         public static float StatusHUDScanInterval = 1.5f;
         public static int StatusHUDDrawSkipFrames = 3;
 
-        // Parallel dispatch
+        // Misc entity parallelism (Hull/Structure/Gap/Power — safe, no side effects)
+        public static bool EnableMiscParallel = true;
+
+        // Parallel dispatch (item worker threads — experimental)
         public static bool EnableParallelDispatch = false;
         public static int ParallelWorkerCount = 2; // 1-6 worker threads
 
         // Spike detector (off by default — adds ~1-2ms overhead when enabled)
         public static bool EnableSpikeDetector = false;
         public static float SpikeThresholdMs = 30f;
+
+        // ── Server-side optimizations ──
+        public static bool EnableServerHashSetDedup = true;
+        public static float MetricSendInterval = 0.5f;
+        public static bool AllowClientSync = false;
 
         // Per-item rules (manual, user-defined)
         public static List<ItemRule> ItemRules = new();
@@ -58,7 +74,7 @@ namespace ItemOptimizerMod
         // Persistence: packageName → int[4] { criticalSkip, activeSkip, moderateSkip, staticSkip }
         public static readonly Dictionary<string, int[]> ModOptSettings = new(StringComparer.Ordinal);
         // Runtime flat lookup: identifier → skipFrames (built from ModOptSettings + prefab classification)
-        public static readonly Dictionary<string, int> ModOptLookup = new(StringComparer.Ordinal);
+        public static volatile Dictionary<string, int> ModOptLookup = new(StringComparer.Ordinal);
 
         // ── Thread safety manual overrides (identifier → tier: 0=Safe, 1=Conditional, 2=Unsafe) ──
         public static readonly Dictionary<string, int> ThreadSafetyOverrides = new(StringComparer.Ordinal);
@@ -126,8 +142,12 @@ namespace ItemOptimizerMod
         /// </summary>
         public static void BuildModOptLookup()
         {
-            ModOptLookup.Clear();
-            if (ModOptSettings.Count == 0) return;
+            var newLookup = new Dictionary<string, int>(StringComparer.Ordinal);
+            if (ModOptSettings.Count == 0)
+            {
+                ModOptLookup = newLookup;
+                return;
+            }
 
             foreach (ItemPrefab prefab in ItemPrefab.Prefabs)
             {
@@ -140,8 +160,10 @@ namespace ItemOptimizerMod
                 int skip = tierSkips[tier];
                 if (skip <= 1) continue; // no throttle
 
-                ModOptLookup[prefab.Identifier.Value] = skip;
+                newLookup[prefab.Identifier.Value] = skip;
             }
+
+            ModOptLookup = newLookup; // atomic reference swap
         }
 
         // ── Profile System (per-mod-set persistence) ──
@@ -189,27 +211,8 @@ namespace ItemOptimizerMod
                 var dir = GetProfileDir();
                 Directory.CreateDirectory(dir);
 
-                var modOptElement = new XElement("ModOptimization");
-                foreach (var kv in ModOptSettings)
-                {
-                    modOptElement.Add(new XElement("Mod",
-                        new XAttribute("name", kv.Key),
-                        new XAttribute("critical", kv.Value[0]),
-                        new XAttribute("active", kv.Value[1]),
-                        new XAttribute("moderate", kv.Value[2]),
-                        new XAttribute("static", kv.Value[3])));
-                }
-
-                var rulesElement = new XElement("ItemRules");
-                foreach (var rule in ItemRules)
-                {
-                    if (string.IsNullOrWhiteSpace(rule.Identifier)) continue;
-                    rulesElement.Add(new XElement("Rule",
-                        new XAttribute("identifier", rule.Identifier),
-                        new XAttribute("action", rule.Action.ToString()),
-                        new XAttribute("skipFrames", rule.SkipFrames),
-                        new XAttribute("condition", rule.Condition)));
-                }
+                var modOptElement = SerializeModOpt();
+                var rulesElement = SerializeItemRules();
 
                 var modsElement = new XElement("EnabledMods");
                 foreach (var pkg in ContentPackageManager.EnabledPackages.All)
@@ -250,44 +253,8 @@ namespace ItemOptimizerMod
                 var root = doc.Root;
                 if (root == null) return;
 
-                ModOptSettings.Clear();
-                var modOptElement = root.Element("ModOptimization");
-                if (modOptElement != null)
-                {
-                    foreach (var modEl in modOptElement.Elements("Mod"))
-                    {
-                        var name = modEl.Attribute("name")?.Value;
-                        if (string.IsNullOrWhiteSpace(name)) continue;
-                        ModOptSettings[name] = new int[]
-                        {
-                            ParseInt(modEl.Attribute("critical")?.Value, 1, 1, 15),
-                            ParseInt(modEl.Attribute("active")?.Value, 3, 1, 15),
-                            ParseInt(modEl.Attribute("moderate")?.Value, 5, 1, 15),
-                            ParseInt(modEl.Attribute("static")?.Value, 8, 1, 15)
-                        };
-                    }
-                }
-
-                ItemRules.Clear();
-                var rulesElement = root.Element("ItemRules");
-                if (rulesElement != null)
-                {
-                    foreach (var ruleEl in rulesElement.Elements("Rule"))
-                    {
-                        var rule = new ItemRule
-                        {
-                            Identifier = ruleEl.Attribute("identifier")?.Value ?? "",
-                            SkipFrames = ParseInt(ruleEl.Attribute("skipFrames")?.Value, 3, 1, 30),
-                            Condition = ruleEl.Attribute("condition")?.Value ?? "always"
-                        };
-                        var actionStr = ruleEl.Attribute("action")?.Value ?? "Skip";
-                        rule.Action = actionStr.Equals("Throttle", StringComparison.OrdinalIgnoreCase)
-                            ? ItemRuleAction.Throttle
-                            : ItemRuleAction.Skip;
-                        if (!string.IsNullOrWhiteSpace(rule.Identifier))
-                            ItemRules.Add(rule);
-                    }
-                }
+                DeserializeModOpt(root);
+                DeserializeItemRules(root);
 
                 BuildLookupTables();
                 BuildModOptLookup();
@@ -341,15 +308,15 @@ namespace ItemOptimizerMod
 
         public static void Load()
         {
-            var path = GetConfigPath();
-            if (!File.Exists(path))
-            {
-                Save();
-                return;
-            }
-
             try
             {
+                var path = GetConfigPath();
+                if (!File.Exists(path))
+                {
+                    Save();
+                    return;
+                }
+
                 var doc = XDocument.Load(path);
                 var root = doc.Root;
                 if (root == null) return;
@@ -413,10 +380,29 @@ namespace ItemOptimizerMod
                 if (afd != null)
                     EnableAfflictionDedup = ParseBool(afd.Attribute("enabled")?.Value, true);
 
+                var animLod = root.Element("AnimLOD");
+                if (animLod != null)
+                    EnableAnimLOD = ParseBool(animLod.Attribute("enabled")?.Value, true);
+
+                var charStagger = root.Element("CharacterStagger");
+                if (charStagger != null)
+                {
+                    EnableCharacterStagger = ParseBool(charStagger.Attribute("enabled")?.Value, false);
+                    CharacterStaggerGroups = ParseInt(charStagger.Attribute("groups")?.Value, 3, 2, 8);
+                }
+
+                var ladderFix = root.Element("LadderFix");
+                if (ladderFix != null)
+                    EnableLadderFix = ParseBool(ladderFix.Attribute("enabled")?.Value, true);
+
+                var platformFix = root.Element("PlatformFix");
+                if (platformFix != null)
+                    EnablePlatformFix = ParseBool(platformFix.Attribute("enabled")?.Value, true);
+
                 var spike = root.Element("SpikeDetector");
                 if (spike != null)
                 {
-                    EnableSpikeDetector = ParseBool(spike.Attribute("enabled")?.Value, true);
+                    EnableSpikeDetector = ParseBool(spike.Attribute("enabled")?.Value, false);
                     SpikeThresholdMs = ParseFloat(spike.Attribute("thresholdMs")?.Value, 30f, 5f, 1000f);
                 }
 
@@ -427,52 +413,23 @@ namespace ItemOptimizerMod
                     ParallelWorkerCount = ParseInt(pd.Attribute("workers")?.Value, 2, 1, 6);
                 }
 
-                // Load item rules
-                ItemRules.Clear();
-                var rulesElement = root.Element("ItemRules");
-                if (rulesElement != null)
+                var mp = root.Element("MiscParallel");
+                if (mp != null)
                 {
-                    foreach (var ruleEl in rulesElement.Elements("Rule"))
-                    {
-                        var rule = new ItemRule
-                        {
-                            Identifier = ruleEl.Attribute("identifier")?.Value ?? "",
-                            SkipFrames = ParseInt(ruleEl.Attribute("skipFrames")?.Value, 3, 1, 30),
-                            Condition = ruleEl.Attribute("condition")?.Value ?? "always"
-                        };
-
-                        var actionStr = ruleEl.Attribute("action")?.Value ?? "Skip";
-                        rule.Action = actionStr.Equals("Throttle", StringComparison.OrdinalIgnoreCase)
-                            ? ItemRuleAction.Throttle
-                            : ItemRuleAction.Skip;
-
-                        if (!string.IsNullOrWhiteSpace(rule.Identifier))
-                            ItemRules.Add(rule);
-                    }
+                    EnableMiscParallel = ParseBool(mp.Attribute("enabled")?.Value, true);
                 }
 
-                // Load mod optimization settings
-                ModOptSettings.Clear();
-                var modOptElement = root.Element("ModOptimization");
-                if (modOptElement != null)
+                var srv = root.Element("ServerOptimization");
+                if (srv != null)
                 {
-                    foreach (var modEl in modOptElement.Elements("Mod"))
-                    {
-                        var name = modEl.Attribute("name")?.Value;
-                        if (string.IsNullOrWhiteSpace(name)) continue;
-                        var skips = new int[]
-                        {
-                            ParseInt(modEl.Attribute("critical")?.Value, 1, 1, 15),
-                            ParseInt(modEl.Attribute("active")?.Value, 3, 1, 15),
-                            ParseInt(modEl.Attribute("moderate")?.Value, 5, 1, 15),
-                            ParseInt(modEl.Attribute("static")?.Value, 8, 1, 15)
-                        };
-                        ModOptSettings[name] = skips;
-                    }
+                    EnableServerHashSetDedup = ParseBool(srv.Attribute("enabled")?.Value, true);
+                    MetricSendInterval = ParseFloat(srv.Attribute("metricInterval")?.Value, 0.5f, 0.1f, 5f);
+                    AllowClientSync = ParseBool(srv.Attribute("allowClientSync")?.Value, false);
                 }
 
-                BuildLookupTables();
-                BuildModOptLookup();
+                DeserializeItemRules(root);
+                DeserializeModOpt(root);
+
                 // Load profile (overrides ItemRules + ModOpt if profile exists)
                 LoadProfile();
                 // Attempt to load thread safety cache
@@ -488,27 +445,8 @@ namespace ItemOptimizerMod
         {
             try
             {
-                var rulesElement = new XElement("ItemRules");
-                foreach (var rule in ItemRules)
-                {
-                    if (string.IsNullOrWhiteSpace(rule.Identifier)) continue;
-                    rulesElement.Add(new XElement("Rule",
-                        new XAttribute("identifier", rule.Identifier),
-                        new XAttribute("action", rule.Action.ToString()),
-                        new XAttribute("skipFrames", rule.SkipFrames),
-                        new XAttribute("condition", rule.Condition)));
-                }
-
-                var modOptElement = new XElement("ModOptimization");
-                foreach (var kv in ModOptSettings)
-                {
-                    modOptElement.Add(new XElement("Mod",
-                        new XAttribute("name", kv.Key),
-                        new XAttribute("critical", kv.Value[0]),
-                        new XAttribute("active", kv.Value[1]),
-                        new XAttribute("moderate", kv.Value[2]),
-                        new XAttribute("static", kv.Value[3])));
-                }
+                var rulesElement = SerializeItemRules();
+                var modOptElement = SerializeModOpt();
 
                 var doc = new XDocument(
                     new XElement("ItemOptimizerConfig",
@@ -539,12 +477,27 @@ namespace ItemOptimizerMod
                             new XAttribute("drawSkipFrames", StatusHUDDrawSkipFrames)),
                         new XElement("AfflictionDedup",
                             new XAttribute("enabled", EnableAfflictionDedup)),
+                        new XElement("AnimLOD",
+                            new XAttribute("enabled", EnableAnimLOD)),
+                        new XElement("CharacterStagger",
+                            new XAttribute("enabled", EnableCharacterStagger),
+                            new XAttribute("groups", CharacterStaggerGroups)),
+                        new XElement("LadderFix",
+                            new XAttribute("enabled", EnableLadderFix)),
+                        new XElement("PlatformFix",
+                            new XAttribute("enabled", EnablePlatformFix)),
                         new XElement("SpikeDetector",
                             new XAttribute("enabled", EnableSpikeDetector),
                             new XAttribute("thresholdMs", SpikeThresholdMs)),
                         new XElement("ParallelDispatch",
                             new XAttribute("enabled", EnableParallelDispatch),
                             new XAttribute("workers", ParallelWorkerCount)),
+                        new XElement("MiscParallel",
+                            new XAttribute("enabled", EnableMiscParallel)),
+                        new XElement("ServerOptimization",
+                            new XAttribute("enabled", EnableServerHashSetDedup),
+                            new XAttribute("metricInterval", MetricSendInterval),
+                            new XAttribute("allowClientSync", AllowClientSync)),
                         rulesElement,
                         modOptElement
                     ));
@@ -563,6 +516,79 @@ namespace ItemOptimizerMod
             {
                 if (!string.IsNullOrWhiteSpace(rule.Identifier))
                     RuleLookup[rule.Identifier] = rule;
+            }
+        }
+
+        // ── Serialization Helpers ──
+
+        private static XElement SerializeItemRules()
+        {
+            var el = new XElement("ItemRules");
+            foreach (var rule in ItemRules)
+            {
+                if (string.IsNullOrWhiteSpace(rule.Identifier)) continue;
+                el.Add(new XElement("Rule",
+                    new XAttribute("identifier", rule.Identifier),
+                    new XAttribute("action", rule.Action.ToString()),
+                    new XAttribute("skipFrames", rule.SkipFrames),
+                    new XAttribute("condition", rule.Condition)));
+            }
+            return el;
+        }
+
+        private static XElement SerializeModOpt()
+        {
+            var el = new XElement("ModOptimization");
+            foreach (var kv in ModOptSettings)
+            {
+                el.Add(new XElement("Mod",
+                    new XAttribute("name", kv.Key),
+                    new XAttribute("critical", kv.Value[0]),
+                    new XAttribute("active", kv.Value[1]),
+                    new XAttribute("moderate", kv.Value[2]),
+                    new XAttribute("static", kv.Value[3])));
+            }
+            return el;
+        }
+
+        private static void DeserializeItemRules(XElement root)
+        {
+            ItemRules.Clear();
+            var rulesElement = root.Element("ItemRules");
+            if (rulesElement == null) return;
+            foreach (var ruleEl in rulesElement.Elements("Rule"))
+            {
+                var rule = new ItemRule
+                {
+                    Identifier = ruleEl.Attribute("identifier")?.Value ?? "",
+                    SkipFrames = ParseInt(ruleEl.Attribute("skipFrames")?.Value, 3, 1, 30),
+                    Condition = ruleEl.Attribute("condition")?.Value ?? "always"
+                };
+                var actionStr = ruleEl.Attribute("action")?.Value ?? "Skip";
+                rule.Action = actionStr.Equals("Throttle", StringComparison.OrdinalIgnoreCase)
+                    ? ItemRuleAction.Throttle
+                    : ItemRuleAction.Skip;
+                if (!string.IsNullOrWhiteSpace(rule.Identifier))
+                    ItemRules.Add(rule);
+            }
+        }
+
+        private static void DeserializeModOpt(XElement root)
+        {
+            ModOptSettings.Clear();
+            var modOptElement = root.Element("ModOptimization");
+            if (modOptElement == null) return;
+            foreach (var modEl in modOptElement.Elements("Mod"))
+            {
+                var name = modEl.Attribute("name")?.Value;
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                ModOptSettings[name] = new int[]
+                {
+                    ParseInt(modEl.Attribute("critical")?.Value, 1, 1, 15),
+                    ParseInt(modEl.Attribute("active")?.Value, 3, 1, 15),
+                    ParseInt(modEl.Attribute("moderate")?.Value, 5, 1, 15),
+                    ParseInt(modEl.Attribute("static")?.Value, 8, 1, 15)
+                };
             }
         }
 

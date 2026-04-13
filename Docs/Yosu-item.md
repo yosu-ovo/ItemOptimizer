@@ -211,9 +211,37 @@ SetStrategyEnabled("parallel_dispatch", true):  ← GUI 切换
 
 ## 8. 性能考量
 
-- 每个 Harmony patch 即使不生效也有调用开销 (~0.1-0.5us per call per patch)
+- 每个 Harmony patch 即使不生效也有调用开销 (~0.5-1μs per call per patch，含 SyncProxy→DMD 分发)
 - `Item.ItemList` 通常有 2000-4000 个物品
 - `MapEntityUpdateInterval > 1` 时物品不是每帧更新
 - 工作线程数量: 1-6 可配置，默认 2
 - 分类在 Prefix 中每帧重新执行 (`IsSafeForWorker`)，O(N) 物品数
 - Harmony hook chain 本身有开销: patch 越多，即使都不生效，每个 item.Update 调用也会慢
+
+### 8.1 Harmony 开销预算 (2026-04-12 实测)
+
+| 组件 | 挂在 | 每帧调用次数 | 单次开销 | 合计 |
+|------|------|------------|---------|------|
+| ItemUpdatePatch prefix | Item.Update | ~2586 | ~0.5-1μs | **1.3-2.6ms** |
+| ParallelDispatch prefix+postfix | Item.Update | ~2586 × 2 | ~0.5μs | **2.6-5.2ms** |
+| 组件级 patch (Motion,CI,Door...) | 各组件.Update | 各数百 | ~0.5μs | ~0.3-0.5ms |
+| MapEntity.UpdateAll hooks | MapEntity.UpdateAll | 1 | ~1μs | **可忽略** |
+
+**关键结论**: Item.Update 上的 patch 是开销大户。每增加一对 prefix+postfix 就增加 ~1.3ms。
+冷存储+降频这些策略虽然能跳过部分 Item.Update，但 Harmony 入口开销在跳过之前就已经发生了。
+
+### 8.2 优化措施
+
+1. **条件挂载**: 功能关闭时 unpatch，消除 Harmony 分发开销 (SyncItemUpdatePatch/TogglePatch)
+2. **Pre-computed flags**: `ItemUpdatePatch.NewFrame()` 中缓存 `HasColdStorage`/`HasGroundItem`/`HasRules`/`HasModOpt`，避免热路径上读字典 `.Count` 和 config 字段
+3. **Fast exit**: 无 Rules/ModOpt 时跳过 identifier 查找
+4. **AggressiveInlining**: 对热路径 prefix 标注，暗示 JIT 内联
+
+### 8.3 基准测试方法论
+
+BaselineBench mod (独立 mod，零 Item.Update patch):
+- 只在 MapEntity.UpdateAll 上挂 prefix+postfix 计时
+- 测量真正的原版 Item 更新耗时，无任何 Harmony 每物品开销
+- 命令: `bb_start [frames]`, `bb_stop`
+- 输出 CSV: frame, items_total, items_active, update_ms
+- 测试时禁用 ItemOptimizer，只启用 BaselineBench

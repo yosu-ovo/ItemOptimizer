@@ -183,18 +183,16 @@ namespace ItemOptimizerMod
 
         private static PrefabSafetyInfo AnalyzePrefab(ItemPrefab prefab)
         {
-            // Vanilla → always Unsafe
             var cp = prefab.ContentPackage;
-            if (cp == null || cp == ContentPackageManager.VanillaCorePackage)
-                return new PrefabSafetyInfo { Tier = ThreadSafetyTier.Unsafe, Flags = UnsafeFlags.None, IsVanilla = true };
+            bool isVanilla = (cp == null || cp == ContentPackageManager.VanillaCorePackage);
 
             // Manual override
             if (Overrides.TryGetValue(prefab.Identifier.Value, out var overrideTier))
-                return new PrefabSafetyInfo { Tier = overrideTier, Flags = UnsafeFlags.ManualOverride, IsVanilla = false };
+                return new PrefabSafetyInfo { Tier = overrideTier, Flags = UnsafeFlags.ManualOverride, IsVanilla = isVanilla };
 
             var configEl = prefab.ConfigElement;
             if (configEl == null)
-                return new PrefabSafetyInfo { Tier = ThreadSafetyTier.Unsafe, Flags = UnsafeFlags.DangerousComponent, IsVanilla = false };
+                return new PrefabSafetyInfo { Tier = ThreadSafetyTier.Unsafe, Flags = UnsafeFlags.DangerousComponent, IsVanilla = isVanilla };
 
             UnsafeFlags flags = UnsafeFlags.None;
 
@@ -221,7 +219,7 @@ namespace ItemOptimizerMod
 
             // Determine tier
             var tier = DetermineTier(flags);
-            return new PrefabSafetyInfo { Tier = tier, Flags = flags, IsVanilla = false };
+            return new PrefabSafetyInfo { Tier = tier, Flags = flags, IsVanilla = isVanilla };
         }
 
         private static void AnalyzeStatusEffects(ContentXElement parent, ref UnsafeFlags flags)

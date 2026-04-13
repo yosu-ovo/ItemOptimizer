@@ -60,14 +60,8 @@ namespace ItemOptimizerMod
             _itemPrefixMethod = new HarmonyMethod(typeof(PerfProfiler), nameof(ItemUpdatePrefix));
             _itemPostfixMethod = new HarmonyMethod(typeof(PerfProfiler), nameof(ItemUpdatePostfix));
 
-            // Only MapEntity.UpdateAll is always-on (1 call/frame, negligible)
-            var mapEntityUpdateAll = AccessTools.Method(typeof(MapEntity), nameof(MapEntity.UpdateAll));
-            if (mapEntityUpdateAll != null)
-            {
-                harmony.Patch(mapEntityUpdateAll,
-                    prefix: new HarmonyMethod(typeof(PerfProfiler), nameof(MapEntityUpdateAllPrefix)),
-                    postfix: new HarmonyMethod(typeof(PerfProfiler), nameof(MapEntityUpdateAllPostfix)));
-            }
+            // MapEntity.UpdateAll timing is now called directly by UpdateAllTakeover,
+            // not via Harmony — no patch registration needed here.
             // Item.Update patches are NOT registered here — only when profiling starts
         }
 
@@ -135,9 +129,9 @@ namespace ItemOptimizerMod
                 // Track parallel lane (only set once per identifier per frame)
                 if (!FrameLane.ContainsKey(id))
                 {
-                    if (Patches.ParallelDispatchPatch.Enabled && Patches.ParallelDispatchPatch.IsWorkerThread)
+                    if (Patches.UpdateAllTakeover.DispatchActive && Patches.UpdateAllTakeover.IsWorkerThread)
                         FrameLane[id] = "worker";
-                    else if (Patches.ParallelDispatchPatch.Enabled)
+                    else if (Patches.UpdateAllTakeover.DispatchActive)
                         FrameLane[id] = "main";
                     else
                         FrameLane[id] = "-";
@@ -209,7 +203,7 @@ namespace ItemOptimizerMod
             }
 
             // Append per-frame parallel summary row
-            if (Patches.ParallelDispatchPatch.Enabled)
+            if (Patches.UpdateAllTakeover.Enabled && OptimizerConfig.EnableParallelDispatch)
             {
                 int mainItems = Stats.MainThreadItems;
                 int parallelItems = Stats.ParallelItems;

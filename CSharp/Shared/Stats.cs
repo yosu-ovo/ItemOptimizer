@@ -4,6 +4,7 @@ namespace ItemOptimizerMod
 {
     static class Stats
     {
+        // Raw per-frame counters — non-atomic: approximate under parallel dispatch
         internal static int ColdStorageSkips;
         internal static int GroundItemSkips;
         internal static int CustomInterfaceSkips;
@@ -16,6 +17,13 @@ namespace ItemOptimizerMod
         internal static int HasStatusTagCacheHits;
         internal static int StatusHUDSkips;
         internal static int AfflictionDedupSkips;
+
+        // ── Character optimization counters ──
+        internal static int AnimLODSkipped;
+        internal static int AnimLODHalfRate;
+        internal static int CharStaggerSkipped;
+        internal static int LadderFixCorrections;
+        internal static int PlatformFixCorrections;
 
         // ── Parallel dispatch counters ──
         internal static int ParallelItems;
@@ -33,6 +41,13 @@ namespace ItemOptimizerMod
         internal static float AvgHasStatusTagCacheHits;
         internal static float AvgStatusHUDSkips;
         internal static float AvgAfflictionDedupSkips;
+
+        // ── Character optimization averages ──
+        internal static float AvgAnimLODSkipped;
+        internal static float AvgAnimLODHalfRate;
+        internal static float AvgCharStaggerSkipped;
+        internal static float AvgLadderFixCorrections;
+        internal static float AvgPlatformFixCorrections;
 
         // ── Parallel dispatch averages ──
         internal static float AvgParallelItems;
@@ -66,6 +81,12 @@ namespace ItemOptimizerMod
             AvgStatusHUDSkips = AvgStatusHUDSkips * (1f - Smoothing) + StatusHUDSkips * Smoothing;
             AvgAfflictionDedupSkips = AvgAfflictionDedupSkips * (1f - Smoothing) + AfflictionDedupSkips * Smoothing;
 
+            AvgAnimLODSkipped = AvgAnimLODSkipped * (1f - Smoothing) + AnimLODSkipped * Smoothing;
+            AvgAnimLODHalfRate = AvgAnimLODHalfRate * (1f - Smoothing) + AnimLODHalfRate * Smoothing;
+            AvgCharStaggerSkipped = AvgCharStaggerSkipped * (1f - Smoothing) + CharStaggerSkipped * Smoothing;
+            AvgLadderFixCorrections = AvgLadderFixCorrections * (1f - Smoothing) + LadderFixCorrections * Smoothing;
+            AvgPlatformFixCorrections = AvgPlatformFixCorrections * (1f - Smoothing) + PlatformFixCorrections * Smoothing;
+
             // Parallel dispatch EMA
             AvgParallelItems = AvgParallelItems * (1f - Smoothing) + ParallelItems * Smoothing;
             AvgMainThreadItems = AvgMainThreadItems * (1f - Smoothing) + MainThreadItems * Smoothing;
@@ -78,7 +99,7 @@ namespace ItemOptimizerMod
 
             // Invalidate per-frame caches
             Patches.HasStatusTagCachePatch.OnNewFrame();
-            Patches.ItemUpdatePatch.NewFrame();
+            Patches.UpdateAllTakeover.RefreshFrameFlags();
             ColdStorageDetector.NewFrame();
 
             ColdStorageSkips = 0;
@@ -93,12 +114,17 @@ namespace ItemOptimizerMod
             HasStatusTagCacheHits = 0;
             StatusHUDSkips = 0;
             AfflictionDedupSkips = 0;
+            AnimLODSkipped = 0;
+            AnimLODHalfRate = 0;
+            CharStaggerSkipped = 0;
+            LadderFixCorrections = 0;
+            PlatformFixCorrections = 0;
             ParallelItems = 0;
             MainThreadItems = 0;
         }
 
         /// <summary>
-        /// Called from ParallelDispatchPatch.UpdateAllPostfix to record per-thread timing.
+        /// Called from UpdateAllTakeover.DispatchItemUpdates to record per-thread timing.
         /// Uses fixed-size worker arrays (no ConcurrentDictionary, stable thread count).
         /// </summary>
         internal static void RecordParallelFrame(
@@ -146,7 +172,10 @@ namespace ItemOptimizerMod
                  + AvgDoorSkips * 0.001f
                  + AvgHasStatusTagCacheHits * 0.0002f
                  + AvgStatusHUDSkips * 0.002f
-                 + AvgAfflictionDedupSkips * 0.001f;
+                 + AvgAfflictionDedupSkips * 0.001f
+                 + AvgAnimLODSkipped * 0.005f
+                 + AvgAnimLODHalfRate * 0.002f
+                 + AvgCharStaggerSkipped * 0.01f;
         }
 
         /// <summary>Estimated ms saved by parallel dispatch (workers run concurrent with main).</summary>
@@ -169,6 +198,9 @@ namespace ItemOptimizerMod
             HasStatusTagCacheHits = 0;
             StatusHUDSkips = 0;
             AfflictionDedupSkips = 0;
+            AnimLODSkipped = 0;
+            AnimLODHalfRate = 0;
+            CharStaggerSkipped = 0;
             ParallelItems = 0;
             MainThreadItems = 0;
             AvgColdStorageSkips = 0;
@@ -183,6 +215,13 @@ namespace ItemOptimizerMod
             AvgHasStatusTagCacheHits = 0;
             AvgStatusHUDSkips = 0;
             AvgAfflictionDedupSkips = 0;
+            AvgAnimLODSkipped = 0;
+            AvgAnimLODHalfRate = 0;
+            AvgCharStaggerSkipped = 0;
+            LadderFixCorrections = 0;
+            AvgLadderFixCorrections = 0;
+            PlatformFixCorrections = 0;
+            AvgPlatformFixCorrections = 0;
             AvgParallelItems = 0;
             AvgMainThreadItems = 0;
             AvgParallelWallMs = 0;

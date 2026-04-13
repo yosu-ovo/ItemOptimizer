@@ -18,7 +18,7 @@ namespace ItemOptimizerMod
 
             // Panel
             ["panel_title"]           = "ItemOptimizer 设置",
-            ["section_strategies"]    = "── 优化策略 ──",
+            ["section_strategies"]    = "── 物品更新策略 ──",
             ["section_item_rules"]    = "── 逐物品规则 ──",
             ["section_stats"]         = "── 实时统计 ──",
 
@@ -61,6 +61,7 @@ namespace ItemOptimizerMod
 
             // Overlay
             ["overlay_toggle"]        = "HUD 统计叠加层",
+            ["overlay_waiting"]       = "等待性能数据...",
 
             // Stats
             ["stats_format"]          = "{0}: ~{1:F0}/帧",
@@ -74,11 +75,31 @@ namespace ItemOptimizerMod
             ["stats_statushud"]       = "StatusHUD",
             ["stats_affliction"]      = "Affliction去重",
 
+            // Character optimization
+            ["section_character_opt"]      = "── 角色优化 ──",
+            ["strategy_anim_lod"]          = "动画LOD",
+            ["strategy_anim_lod_desc"]     = "简化物理角色跳过动画计算（不可见），远距离角色降半频",
+            ["strategy_char_stagger"]      = "AI交错更新",
+            ["strategy_char_stagger_desc"] = "怪物AI分组轮流更新，摊平CPU负载。分组数越多越平但AI反应越慢",
+            ["stagger_groups_label"]       = "分组",
+            ["strategy_ladder_fix"]        = "梯子反同步修复",
+            ["strategy_ladder_fix_desc"]   = "修复原版梯子网络反同步bug：服务器和客户端攀爬状态不一致导致的橡皮筋效应。自动检测并修正攀爬动画状态，连续拉回时强制接受服务器判定",
+            ["strategy_platform_fix"]      = "平台穿越反同步修复",
+            ["strategy_platform_fix_desc"] = "修复原版平台穿越网络反同步：服务器与客户端IgnorePlatforms状态不一致导致在楼梯/平台上按S键时的回弹",
+            ["stats_ladder_fix"]           = "梯子修正",
+            ["stats_platform_fix"]         = "平台修正",
+            ["stats_anim_lod"]             = "动画LOD",
+            ["stats_char_stagger"]         = "AI交错",
+
             // Mod list
             ["section_mod_list"]      = "── Mod 列表 ──",
             ["section_mod_control"]   = "── Mod 控制面板 ──",
             ["btn_optimize_all"]      = "一键推荐优化",
             ["btn_clear_all_mod"]     = "清除所有Mod规则",
+            ["confirm_clear_all"]     = "确定要清除所有 Mod 规则吗？此操作不可撤销。",
+            ["confirm_optimize_all"]  = "确定要对所有 Mod 应用推荐优化吗？",
+            ["btn_confirm"]           = "确定",
+            ["btn_cancel"]            = "取消",
             ["mods_optimized_summary"]= "已优化 {0}/{1} mods",
             ["tier_critical"]         = "高活跃",
             ["tier_active"]           = "活跃",
@@ -109,6 +130,8 @@ namespace ItemOptimizerMod
             ["config_reloaded"]       = "配置已重载",
 
             // Parallel dispatch
+            ["strategy_misc_parallel"]     = "Misc实体并行",
+            ["strategy_misc_parallel_desc"]= "Hull/Structure/Gap/Power更新的4路并行执行(EP风格)。安全、无副作用",
             ["strategy_parallel"]     = "并行物品更新",
             ["strategy_parallel_desc"]= "将安全物品分配到工作线程并行执行Update，减少主线程负载。实验性功能",
             ["parallel_workers_label"]= "线程数",
@@ -117,6 +140,20 @@ namespace ItemOptimizerMod
             ["parallel_worker"]       = "工作线程",
             ["parallel_saved"]        = "并行节省: ~{0:F1}ms",
             ["parallel_items"]        = "并行: ~{0:F0}  主线程: ~{1:F0}",
+
+            // Server optimization
+            ["section_server"]            = "服务器",
+            ["section_network_sync"]      = "── 网络同步修复 ──",
+            ["section_parallel"]          = "── 并行处理 ──",
+            ["strategy_server_dedup"]     = "HashSet去重",
+            ["strategy_server_dedup_desc"]= "用HashSet替代Queue.Contains的O(n)检查，优化位置更新入队",
+            ["server_good"]               = "良好",
+            ["server_warning"]            = "警告",
+            ["server_critical"]           = "危险",
+            ["server_clients_entities"]   = "  客户端: {0}  实体: {1}",
+            ["server_queues"]             = "  位置队列: {0:F1}  事件队列: {1:F1}",
+            ["server_skipped"]            = "  跳过物品: {0}",
+            ["server_metric_interval"]    = "指标发送间隔",
 
             // Thread safety analysis
             ["section_thread_safety"]     = "── 线程安全分析 ──",
@@ -165,7 +202,7 @@ namespace ItemOptimizerMod
 
             // Panel
             ["panel_title"]           = "ItemOptimizer Settings",
-            ["section_strategies"]    = "── Strategies ──",
+            ["section_strategies"]    = "── Item Update Strategies ──",
             ["section_item_rules"]    = "── Per-Item Rules ──",
             ["section_stats"]         = "── Live Stats ──",
 
@@ -208,6 +245,7 @@ namespace ItemOptimizerMod
 
             // Overlay
             ["overlay_toggle"]        = "HUD Stats Overlay",
+            ["overlay_waiting"]       = "Waiting for perf data...",
 
             // Stats
             ["stats_format"]          = "{0}: ~{1:F0}/frame",
@@ -221,11 +259,31 @@ namespace ItemOptimizerMod
             ["stats_statushud"]       = "StatusHUD",
             ["stats_affliction"]      = "Affliction Dedup",
 
+            // Character optimization
+            ["section_character_opt"]      = "── Character Optimization ──",
+            ["strategy_anim_lod"]          = "Animation LOD",
+            ["strategy_anim_lod_desc"]     = "Skip animation for invisible (simple physics) characters, half-rate for distant ones",
+            ["strategy_char_stagger"]      = "AI Stagger Update",
+            ["strategy_char_stagger_desc"] = "Spread enemy AI updates across frames. More groups = smoother load but slower AI reactions",
+            ["stagger_groups_label"]       = "Groups",
+            ["strategy_ladder_fix"]        = "Ladder Desync Fix",
+            ["strategy_ladder_fix_desc"]   = "Fix vanilla ladder networking desync: corrects climbing animation state mismatch between server and client. Detects rubber-banding loops and force-accepts server state",
+            ["strategy_platform_fix"]      = "Platform Desync Fix",
+            ["strategy_platform_fix_desc"] = "Fix vanilla platform drop-through desync: syncs IgnorePlatforms from server state, preventing rubber-banding when pressing S on stairs/platforms",
+            ["stats_ladder_fix"]           = "Ladder Fix",
+            ["stats_platform_fix"]         = "Platform Fix",
+            ["stats_anim_lod"]             = "Anim LOD",
+            ["stats_char_stagger"]         = "AI Stagger",
+
             // Mod list
             ["section_mod_list"]      = "── Mod List ──",
             ["section_mod_control"]   = "── Mod Control Panel ──",
             ["btn_optimize_all"]      = "Optimize All (Recommended)",
             ["btn_clear_all_mod"]     = "Clear All Mod Rules",
+            ["confirm_clear_all"]     = "Clear all mod rules? This cannot be undone.",
+            ["confirm_optimize_all"]  = "Apply recommended optimization to all mods?",
+            ["btn_confirm"]           = "Confirm",
+            ["btn_cancel"]            = "Cancel",
             ["mods_optimized_summary"]= "{0}/{1} mods optimized",
             ["tier_critical"]         = "Critical",
             ["tier_active"]           = "Active",
@@ -256,6 +314,8 @@ namespace ItemOptimizerMod
             ["config_reloaded"]       = "Config reloaded",
 
             // Parallel dispatch
+            ["strategy_misc_parallel"]     = "Misc Entity Parallel",
+            ["strategy_misc_parallel_desc"]= "4-way parallel execution for Hull/Structure/Gap/Power updates (EP-style). Safe, no side effects.",
             ["strategy_parallel"]     = "Parallel Item Update",
             ["strategy_parallel_desc"]= "Dispatch safe items to worker threads for parallel Update execution. Experimental.",
             ["parallel_workers_label"]= "Workers",
@@ -264,6 +324,20 @@ namespace ItemOptimizerMod
             ["parallel_worker"]       = "Worker",
             ["parallel_saved"]        = "Parallel saved: ~{0:F1}ms",
             ["parallel_items"]        = "Parallel: ~{0:F0}  Main: ~{1:F0}",
+
+            // Server optimization
+            ["section_server"]            = "Server",
+            ["section_network_sync"]      = "── Network Sync Fixes ──",
+            ["section_parallel"]          = "── Parallel Processing ──",
+            ["strategy_server_dedup"]     = "HashSet Dedup",
+            ["strategy_server_dedup_desc"]= "Replace Queue.Contains O(n) with HashSet O(1) for position update enqueue",
+            ["server_good"]               = "Good",
+            ["server_warning"]            = "Warning",
+            ["server_critical"]           = "Critical",
+            ["server_clients_entities"]   = "  Clients: {0}  Entities: {1}",
+            ["server_queues"]             = "  Pos Queue: {0:F1}  Event Queue: {1:F1}",
+            ["server_skipped"]            = "  Skipped Items: {0}",
+            ["server_metric_interval"]    = "Metric Interval",
 
             // Thread safety analysis
             ["section_thread_safety"]     = "── Thread Safety Analysis ──",
