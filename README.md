@@ -2,7 +2,7 @@
 
 Barotrauma Lua/CSharp mod that reduces unnecessary per-frame work in large submarines. Requires [Lua For Barotrauma](https://steamcommunity.com/sharedfiles/filedetails/?id=2559634234).
 
-**Honest disclaimer:** The optimization gains are modest — typically 1-3ms/frame depending on submarine size and entity count. This mod is designed to be as non-intrusive as possible and should not affect normal gameplay. All features can be individually toggled on/off in the in-game settings panel (ESC menu).
+The optimization gains are modest — typically 1-3ms/frame depending on submarine size and entity count. This mod tries to be as non-intrusive as possible and should not affect normal gameplay. All features can be individually toggled on/off in the in-game settings panel (ESC menu).
 
 ## Features
 
@@ -63,7 +63,7 @@ Press ESC in-game to access the settings panel via the "ItemOptimizer" button. A
 
 Barotrauma Lua/CSharp mod, 减少大型潜艇中不必要的逐帧计算。依赖 [Lua For Barotrauma](https://steamcommunity.com/sharedfiles/filedetails/?id=2559634234)。
 
-**老实说:** 优化增益有限 — 通常 1-3ms/帧, 取决于潜艇大小和实体数量。本 mod 设计原则是尽量不影响正常游戏流程，所有功能均可在游戏内设置面板中单独开关。
+**事实上:** 优化增益有限 — 通常 1-3ms/帧, 取决于潜艇大小和实体数量。本 mod 设计原则是尽量不影响正常游戏流程，所有功能均可在游戏内设置面板中单独开关。
 
 ## 功能
 
