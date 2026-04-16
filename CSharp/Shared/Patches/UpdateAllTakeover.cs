@@ -457,6 +457,32 @@ namespace ItemOptimizerMod.Patches
                         }
                     }
 
+                    // Strategy 2: Ground Item Throttle
+                    // All ground items (ParentInventory==null): throttle StatusEffects + Components.
+                    // Items with active physics bodies get ProxyMinimalUpdate to preserve physics;
+                    // items without bodies (lights, labels, decals) get a pure skip.
+                    // Note: ColdStorage never covers ground items (ParentInventory==null → false),
+                    // so this is the primary throttle path for ALL non-wire, non-signalgraph ground items.
+                    // Skip: whitelist, items with active critical components (running machines, etc.)
+                    if (_hasGroundItem && item.ParentInventory == null
+                        && !OptimizerConfig.WhitelistLookup.Contains(
+                            item.Prefab?.Identifier.Value ?? "")
+                        && !HasActiveCriticalComponent(item))
+                    {
+                        int gid = item.ID;
+                        ThrottleCounters[gid]++;
+                        if (ThrottleCounters[gid] % OptimizerConfig.GroundItemSkipFrames != 0)
+                        {
+                            // Only run physics preservation for items with active bodies
+                            if (item.body != null && item.body.Enabled)
+                                ProxyMinimalUpdate(item, dt);
+                            Stats.GroundItemSkips++;
+                            skippedCount++;
+                            continue;
+                        }
+                        // Full frame: fall through to normal classify + dispatch
+                    }
+
                     if (ShouldSkipItem(item))
                     {
                         skippedCount++;
@@ -659,11 +685,7 @@ namespace ItemOptimizerMod.Patches
                 return true;
             }
 
-            // Strategy 2: Ground Item Throttle — DISABLED
-            // Removed: throttling ground items skips Item.Update() which breaks
-            // UpdateTransform/FindHull/ApplyWaterForces, causing items to fall
-            // through the hull. Farseer physics alone cannot maintain hull tracking.
-            // Ground holdable items are few (<20 typically), so the savings are negligible.
+            // Strategy 2: Ground Item Throttle — handled in classify loop (physics-preserving)
 
             // Fast exit: no rules and no mod optimization
             if (!_hasRules && !_hasModOpt) return false;
@@ -846,6 +868,42 @@ namespace ItemOptimizerMod.Patches
                 || ic is Rope
                 || ic is EntitySpawnerComponent
                 || _unsafeTypeNames.Contains(ic.GetType().Name);
+        }
+
+        // ────────────────────────────────────────────────
+        //  Ground item critical component check
+        // ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns true if this item has a critical component that is currently active.
+        /// Items with active critical components must NOT be ground-throttled.
+        /// Idle machines (Fabricator not crafting, etc.) CAN be throttled.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool HasActiveCriticalComponent(Item item)
+        {
+            foreach (var ic in item.Components)
+            {
+                // Always-critical: submarine infrastructure that must never be throttled
+                if (ic is Reactor || ic is Engine || ic is Steering
+                    || ic is DockingPort || ic is ElectricalDischarger)
+                    return true;
+
+                // Critical when active: power, fluid, structural, interaction
+                if (ic is Pump || ic is Door || ic is PowerTransfer
+                    || ic is OxygenGenerator || ic is Turret
+                    || ic is Controller || ic is TriggerComponent)
+                {
+                    if (ic.IsActive) return true;
+                }
+
+                // Machines: only critical when running (crafting/deconstructing)
+                if (ic is Fabricator || ic is Deconstructor)
+                {
+                    if (ic.IsActive) return true;
+                }
+            }
+            return false;
         }
 
     }

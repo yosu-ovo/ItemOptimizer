@@ -87,11 +87,14 @@ namespace ItemOptimizerMod
                 }
 
                 // Compute tracked vs total wall time
+                // "Overhead" now shows only the mod-added classification cost,
+                // not vanilla phases (A/D) which would exist without the mod.
                 // Main thread + proxy run sequentially in the dispatch loop.
                 // Workers overlap with main thread, so don't add them to wall time.
                 // When parallel is OFF, use PhaseBMainLoopMs for main thread time.
                 float mainThreadMs = fullParallel ? Stats.AvgThreadMs[0] : Stats.AvgPhaseBMainLoopMs;
-                float trackedMs = mainThreadMs
+                float vanillaMs = Stats.AvgPhaseAMs + Stats.AvgPhaseCMs + Stats.AvgPhaseDMs;
+                float trackedMs = mainThreadMs + vanillaMs
                     + Stats.AvgProxyBatchComputeMs + Stats.AvgProxySyncBackMs + Stats.AvgProxyPhysicsMs;
                 float overheadMs = Math.Max(0, Stats.AvgTotalDispatchMs - trackedMs);
                 dispatchTotalLine = string.Format(Localization.T("dispatch_total"),
