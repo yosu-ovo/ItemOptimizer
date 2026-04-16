@@ -8,9 +8,9 @@ namespace ItemOptimizerMod
 {
     static partial class SettingsPanel
     {
-        // ── Item Rules Section Builder ──
+        // ── Whitelist Section Builder ──
 
-        private static void BuildItemRulesSection(GUIComponent content)
+        private static void BuildWhitelistSection(GUIComponent content)
         {
             // Collapsible header
             var headerFrame = new GUIFrame(
@@ -25,11 +25,11 @@ namespace ItemOptimizerMod
 
             new GUIButton(
                 new RectTransform(new Vector2(0.05f, 1f), headerRow.RectTransform),
-                _rulesExpanded ? "\u25bc" : "\u25b6", Alignment.Center, "GUIButtonSmall")
+                _whitelistExpanded ? "\u25bc" : "\u25b6", Alignment.Center, "GUIButtonSmall")
             {
                 OnClicked = (btn, ud) =>
                 {
-                    _rulesExpanded = !_rulesExpanded;
+                    _whitelistExpanded = !_whitelistExpanded;
                     Rebuild();
                     return true;
                 }
@@ -37,81 +37,66 @@ namespace ItemOptimizerMod
 
             new GUITextBlock(
                 new RectTransform(new Vector2(0.90f, 1f), headerRow.RectTransform),
-                Localization.T("section_item_rules"),
+                Localization.T("section_whitelist"),
                 textColor: Color.Cyan,
                 font: GUIStyle.SmallFont);
 
-            if (!_rulesExpanded) return;
+            if (!_whitelistExpanded) return;
 
-            ruleRows.Clear();
-            foreach (var rule in OptimizerConfig.ItemRules)
-                AddRuleRow(content, rule);
+            new GUITextBlock(
+                new RectTransform(new Vector2(1f, 0.04f), content.RectTransform),
+                Localization.T("whitelist_desc"),
+                font: GUIStyle.SmallFont,
+                textColor: Color.LightGray,
+                wrap: true);
 
-            new GUIButton(
-                new RectTransform(new Vector2(0.4f, 0.05f), content.RectTransform),
-                Localization.T("rule_add"), Alignment.Center, "GUIButtonSmall")
+            Spacer(content);
+
+            // ── Existing whitelist entries ──
+            if (OptimizerConfig.Whitelist.Count == 0)
             {
-                OnClicked = (btn, ud) =>
+                new GUITextBlock(
+                    new RectTransform(new Vector2(1f, 0.04f), content.RectTransform),
+                    Localization.T("whitelist_empty"),
+                    font: GUIStyle.SmallFont,
+                    textColor: new Color(150, 150, 150));
+            }
+            else
+            {
+                foreach (var identifier in new List<string>(OptimizerConfig.Whitelist))
                 {
-                    OptimizerConfig.ItemRules.Add(new ItemRule());
-                    Rebuild();
-                    return true;
+                    AddWhitelistRow(content, identifier);
                 }
-            };
-        }
+            }
 
-        // ── Rule Row with Autocomplete ──
+            Spacer(content);
 
-        private static void AddRuleRow(GUIComponent parent, ItemRule rule)
-        {
-            var rowFrame = new GUIFrame(
-                new RectTransform(new Vector2(1f, 0.07f), parent.RectTransform),
+            // ── Add new item row ──
+            var addRowFrame = new GUIFrame(
+                new RectTransform(new Vector2(1f, 0.06f), content.RectTransform),
                 style: null);
 
-            var row = new GUILayoutGroup(
-                new RectTransform(Vector2.One, rowFrame.RectTransform),
+            var addRow = new GUILayoutGroup(
+                new RectTransform(Vector2.One, addRowFrame.RectTransform),
                 isHorizontal: true)
             {
                 RelativeSpacing = 0.01f,
                 Stretch = true
             };
 
-            // Display name in a framed box
-            string displayName = "-";
-            if (!string.IsNullOrWhiteSpace(rule.Identifier))
+            var addBox = new GUITextBox(
+                new RectTransform(new Vector2(0.6f, 1f), addRow.RectTransform))
             {
-                foreach (var p in ItemPrefab.Prefabs)
-                {
-                    if (p.Identifier.Value == rule.Identifier)
-                    {
-                        displayName = p.Name?.Value ?? rule.Identifier;
-                        break;
-                    }
-                }
-            }
-            // Display name as read-only textbox (shows standard textbox border)
-            var nameBox = new GUITextBox(
-                new RectTransform(new Vector2(0.18f, 1f), row.RectTransform))
-            {
-                Text = displayName,
-                Readonly = true,
-                OverflowClip = true
-            };
-
-            var identBox = new GUITextBox(
-                new RectTransform(new Vector2(0.20f, 1f), row.RectTransform))
-            {
-                Text = rule.Identifier,
-                ToolTip = Localization.T("rule_identifier"),
+                ToolTip = Localization.T("whitelist_add"),
                 OverflowClip = true
             };
 
             // ── Suggestion list (autocomplete overlay, parented to frame to avoid clipping) ──
-            int sugLineH = (int)(rowFrame.Rect.Height * 0.85f);
+            int sugLineH = (int)(addRowFrame.Rect.Height * 0.85f);
             int sugMaxItems = 5;
             var sugList = new GUIListBox(
                 new RectTransform(
-                    new Point(identBox.Rect.Width, sugLineH * sugMaxItems),
+                    new Point(addBox.Rect.Width, sugLineH * sugMaxItems),
                     frame.RectTransform,
                     Anchor.TopLeft),
                 style: null)
@@ -119,6 +104,7 @@ namespace ItemOptimizerMod
                 Visible = false,
                 PlaySoundOnSelect = true
             };
+
             var sugBgColor = new Color(20, 25, 30, 230);
             var sugOutlineColor = new Color(100, 120, 140, 255);
             sugList.Color = sugBgColor;
@@ -143,6 +129,7 @@ namespace ItemOptimizerMod
                 string filter = text.Trim();
                 var matches = new List<(string id, string name)>();
 
+                // Pass 1: prefix match on identifier
                 foreach (var p in ItemPrefab.Prefabs)
                 {
                     if (matches.Count >= sugMaxItems) break;
@@ -151,6 +138,7 @@ namespace ItemOptimizerMod
                         matches.Add((id, p.Name?.Value ?? id));
                 }
 
+                // Pass 2: contains match on identifier
                 if (matches.Count < sugMaxItems)
                 {
                     var found = new HashSet<string>(matches.Select(m => m.id));
@@ -163,6 +151,7 @@ namespace ItemOptimizerMod
                     }
                 }
 
+                // Pass 3: contains match on display name
                 if (matches.Count < sugMaxItems)
                 {
                     var found = new HashSet<string>(matches.Select(m => m.id));
@@ -206,8 +195,8 @@ namespace ItemOptimizerMod
 
                 sugList.Visible = true;
 
-                // Position below the identifier textbox (in frame coordinates)
-                var boxRect = identBox.Rect;
+                // Position below the add textbox (in frame coordinates)
+                var boxRect = addBox.Rect;
                 var frameRect = frame.Rect;
                 sugList.RectTransform.NonScaledSize = new Point(boxRect.Width, sugLineH * matches.Count);
                 sugList.RectTransform.AbsoluteOffset = new Point(
@@ -215,9 +204,8 @@ namespace ItemOptimizerMod
                     boxRect.Bottom - frameRect.Y + 4);
             }
 
-            identBox.OnTextChanged += (tb, text) =>
+            addBox.OnTextChanged += (tb, text) =>
             {
-                rule.Identifier = text ?? "";
                 UpdateSuggestions(text ?? "");
                 return true;
             };
@@ -226,91 +214,99 @@ namespace ItemOptimizerMod
             {
                 if (userData is string selectedId)
                 {
-                    rule.Identifier = selectedId;
-                    identBox.Text = selectedId;
+                    addBox.Text = selectedId;
                     sugList.Visible = false;
-                    Rebuild();
                 }
                 return true;
             };
 
-            identBox.OnDeselected += (sender, key) =>
+            addBox.OnDeselected += (sender, key) =>
             {
                 CoroutineManager.Invoke(() => { sugList.Visible = false; }, delay: 0.15f);
             };
 
-            identBox.OnSelected += (sender, key) =>
+            addBox.OnSelected += (sender, key) =>
             {
-                if (!string.IsNullOrWhiteSpace(identBox.Text))
-                    UpdateSuggestions(identBox.Text);
-            };
-
-            var actionDd = new GUIDropDown(
-                new RectTransform(new Vector2(0.18f, 1f), row.RectTransform));
-            actionDd.AddItem(Localization.T("action_skip"), ItemRuleAction.Skip);
-            actionDd.AddItem(Localization.T("action_throttle"), ItemRuleAction.Throttle);
-            actionDd.SelectItem(rule.Action);
-            actionDd.OnSelected += (component, obj) =>
-            {
-                if (obj is ItemRuleAction action)
-                    rule.Action = action;
-                return true;
-            };
-
-            // Skip frames as plain text box (no up/down arrows)
-            var skipBox = new GUITextBox(
-                new RectTransform(new Vector2(0.10f, 1f), row.RectTransform))
-            {
-                Text = rule.SkipFrames.ToString(),
-                OverflowClip = true
-            };
-            skipBox.OnDeselected += (sender, key) =>
-            {
-                if (int.TryParse(skipBox.Text, out int v))
-                {
-                    int clamped = Math.Clamp(v, 1, 30);
-                    rule.SkipFrames = clamped;
-                    skipBox.Text = clamped.ToString();
-                }
-                else
-                    skipBox.Text = rule.SkipFrames.ToString();
-            };
-
-            var condDd = new GUIDropDown(
-                new RectTransform(new Vector2(0.22f, 1f), row.RectTransform));
-            condDd.AddItem(Localization.T("cond_always"), "always");
-            condDd.AddItem(Localization.T("cond_cold_storage"), "coldStorage");
-            condDd.AddItem(Localization.T("cond_not_active_use"), "notInActiveUse");
-            condDd.SelectItem(rule.Condition);
-            condDd.OnSelected += (component, obj) =>
-            {
-                if (obj is string cond)
-                    rule.Condition = cond;
-                return true;
+                if (!string.IsNullOrWhiteSpace(addBox.Text))
+                    UpdateSuggestions(addBox.Text);
             };
 
             new GUIButton(
-                new RectTransform(new Vector2(0.08f, 1f), row.RectTransform),
-                Localization.T("rule_remove"), Alignment.Center, "GUIButtonSmall")
+                new RectTransform(new Vector2(0.2f, 1f), addRow.RectTransform),
+                Localization.T("whitelist_add_btn"), Alignment.Center, "GUIButtonSmall")
             {
                 OnClicked = (btn, ud) =>
                 {
-                    OptimizerConfig.ItemRules.Remove(rule);
+                    string id = addBox.Text?.Trim();
+                    if (!string.IsNullOrEmpty(id) && !OptimizerConfig.Whitelist.Contains(id))
+                    {
+                        OptimizerConfig.Whitelist.Add(id);
+                        OptimizerConfig.RebuildWhitelistLookup();
+                        addBox.Text = "";
+                        Rebuild();
+                    }
+                    return true;
+                }
+            };
+        }
+
+        private static void AddWhitelistRow(GUIComponent parent, string identifier)
+        {
+            var rowFrame = new GUIFrame(
+                new RectTransform(new Vector2(1f, 0.05f), parent.RectTransform),
+                style: null);
+
+            var row = new GUILayoutGroup(
+                new RectTransform(Vector2.One, rowFrame.RectTransform),
+                isHorizontal: true)
+            {
+                RelativeSpacing = 0.01f,
+                Stretch = true
+            };
+
+            // Resolve display name
+            string displayName = identifier;
+            foreach (var p in ItemPrefab.Prefabs)
+            {
+                if (p.Identifier.Value == identifier)
+                {
+                    displayName = p.Name?.Value ?? identifier;
+                    break;
+                }
+            }
+
+            new GUITextBlock(
+                new RectTransform(new Vector2(0.35f, 1f), row.RectTransform),
+                displayName,
+                font: GUIStyle.SmallFont,
+                textColor: Color.White);
+
+            new GUITextBlock(
+                new RectTransform(new Vector2(0.35f, 1f), row.RectTransform),
+                identifier,
+                font: GUIStyle.SmallFont,
+                textColor: Color.Gray);
+
+            // Whitelist indicator
+            new GUITextBlock(
+                new RectTransform(new Vector2(0.15f, 1f), row.RectTransform),
+                "\u2605",  // ★ star
+                font: GUIStyle.SmallFont,
+                textColor: Color.Gold,
+                textAlignment: Alignment.Center);
+
+            new GUIButton(
+                new RectTransform(new Vector2(0.10f, 1f), row.RectTransform),
+                Localization.T("whitelist_remove"), Alignment.Center, "GUIButtonSmall")
+            {
+                OnClicked = (btn, ud) =>
+                {
+                    OptimizerConfig.Whitelist.Remove(identifier);
+                    OptimizerConfig.RebuildWhitelistLookup();
                     Rebuild();
                     return true;
                 }
             };
-
-            ruleRows.Add(new RuleRow
-            {
-                Container = rowFrame,
-                IdentifierBox = identBox,
-                ActionDropDown = actionDd,
-                SkipBox = skipBox,
-                ConditionDropDown = condDd,
-                SuggestionList = sugList,
-                Rule = rule
-            });
         }
     }
 }

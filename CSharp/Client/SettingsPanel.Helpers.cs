@@ -140,5 +140,103 @@ namespace ItemOptimizerMod
                 Localization.Format("stats_format", Localization.T(nameKey), avgValue),
                 font: GUIStyle.SmallFont);
         }
+
+        /// <summary>
+        /// Label + DropDown for multi-level strategy (e.g. signal graph: Off/Accel/Aggressive).
+        /// </summary>
+        private static void StrategyDropDown(GUIComponent parent, string nameKey, string descKey,
+            string[] optionKeys, int currentIndex, Action<int> setter)
+        {
+            var row = new GUILayoutGroup(
+                new RectTransform(new Vector2(1f, 0.05f), parent.RectTransform),
+                isHorizontal: true)
+            {
+                RelativeSpacing = 0.01f
+            };
+
+            new GUITextBlock(
+                new RectTransform(new Vector2(0.45f, 1f), row.RectTransform),
+                Localization.T(nameKey),
+                font: GUIStyle.SmallFont)
+            {
+                ToolTip = Localization.T(descKey)
+            };
+
+            var dropdown = new GUIDropDown(
+                new RectTransform(new Vector2(0.45f, 1f), row.RectTransform));
+
+            for (int i = 0; i < optionKeys.Length; i++)
+                dropdown.AddItem(Localization.T(optionKeys[i]), i);
+
+            dropdown.SelectItem(currentIndex);
+            dropdown.OnSelected = (component, obj) =>
+            {
+                int val = (int)obj;
+                setter(val);
+                LuaCsLogger.Log($"[ItemOptimizer] {nameKey} = {val}");
+                return true;
+            };
+        }
+        /// <summary>
+        /// Label + DropDown + skip frames text input for sensor mode strategies.
+        /// </summary>
+        private static void StrategyDropDownWithNumber(GUIComponent parent, string nameKey, string descKey,
+            string[] optionKeys, int currentIndex, Action<int> modeSetter,
+            int currentSkip, Action<int> skipSetter)
+        {
+            var row = new GUILayoutGroup(
+                new RectTransform(new Vector2(1f, 0.05f), parent.RectTransform),
+                isHorizontal: true)
+            {
+                RelativeSpacing = 0.01f
+            };
+
+            new GUITextBlock(
+                new RectTransform(new Vector2(0.30f, 1f), row.RectTransform),
+                Localization.T(nameKey),
+                font: GUIStyle.SmallFont)
+            {
+                ToolTip = Localization.T(descKey)
+            };
+
+            var dropdown = new GUIDropDown(
+                new RectTransform(new Vector2(0.25f, 1f), row.RectTransform));
+
+            for (int i = 0; i < optionKeys.Length; i++)
+                dropdown.AddItem(Localization.T(optionKeys[i]), i);
+
+            dropdown.SelectItem(currentIndex);
+            dropdown.OnSelected = (component, obj) =>
+            {
+                int val = (int)obj;
+                modeSetter(val);
+                LuaCsLogger.Log($"[ItemOptimizer] {nameKey} = {val}");
+                return true;
+            };
+
+            new GUITextBlock(
+                new RectTransform(new Vector2(0.15f, 1f), row.RectTransform),
+                Localization.T("skip_frames_label"),
+                textAlignment: Alignment.CenterRight,
+                font: GUIStyle.SmallFont);
+
+            var skipBox = new GUITextBox(
+                new RectTransform(new Vector2(0.15f, 1f), row.RectTransform))
+            {
+                Text = currentSkip.ToString(),
+                OverflowClip = true
+            };
+            skipBox.OnDeselected += (sender, key) =>
+            {
+                if (int.TryParse(skipBox.Text, out int v))
+                {
+                    int clamped = Math.Clamp(v, 1, 30);
+                    skipSetter(clamped);
+                    skipBox.Text = clamped.ToString();
+                }
+                else
+                    skipBox.Text = currentSkip.ToString();
+            };
+        }
     }
 }

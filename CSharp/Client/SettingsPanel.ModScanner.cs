@@ -149,12 +149,12 @@ namespace ItemOptimizerMod
             foreach (var mod in modMap.Values)
             {
                 // Check if we have saved settings for this mod
-                OptimizerConfig.ModOptSettings.TryGetValue(mod.Name, out var savedSkips);
+                OptimizerConfig.ModOptProfiles.TryGetValue(mod.Name, out var profile);
 
                 foreach (ActivityTier tier in Enum.GetValues(typeof(ActivityTier)))
                 {
                     var meta = TierMeta[(int)tier];
-                    int currentSkip = savedSkips != null ? savedSkips[(int)tier] : meta.RecommendedSkip;
+                    int currentSkip = profile != null ? profile.TierBases[(int)tier] : meta.RecommendedSkip;
                     mod.Tiers[tier] = new ModTierInfo
                     {
                         Tier = tier,

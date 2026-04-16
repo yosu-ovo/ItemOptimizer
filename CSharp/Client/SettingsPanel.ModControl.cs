@@ -15,37 +15,40 @@ namespace ItemOptimizerMod
             var tierInfo = mod.Tiers[tier];
             int skip = tierInfo.CurrentSkip;
 
-            // Get or create the tier skips array for this package
-            if (!OptimizerConfig.ModOptSettings.TryGetValue(mod.Name, out var tierSkips))
+            // Get or create the profile for this package
+            if (!OptimizerConfig.ModOptProfiles.TryGetValue(mod.Name, out var profile))
             {
-                tierSkips = new int[] { 1, 1, 1, 1 }; // default: no throttle
-                OptimizerConfig.ModOptSettings[mod.Name] = tierSkips;
+                profile = new ModOptProfile();
+                OptimizerConfig.ModOptProfiles[mod.Name] = profile;
             }
 
-            tierSkips[(int)tier] = skip;
+            profile.TierBases[(int)tier] = skip;
 
-            // If all tiers are 1 (no throttle), remove the entry entirely
-            if (tierSkips[0] <= 1 && tierSkips[1] <= 1 && tierSkips[2] <= 1 && tierSkips[3] <= 1)
-                OptimizerConfig.ModOptSettings.Remove(mod.Name);
+            // If all tiers are 1 (no throttle) and no intensity, remove the entry entirely
+            if (profile.TierBases[0] <= 1 && profile.TierBases[1] <= 1
+                && profile.TierBases[2] <= 1 && profile.TierBases[3] <= 1
+                && profile.Intensity <= 0f)
+                OptimizerConfig.ModOptProfiles.Remove(mod.Name);
 
             OptimizerConfig.BuildModOptLookup();
         }
 
         private static void ApplyModRecommended(ModInfo mod)
         {
-            var tierSkips = new int[4];
+            var profile = new ModOptProfile();
             foreach (ActivityTier tier in Enum.GetValues(typeof(ActivityTier)))
             {
                 var tierInfo = mod.Tiers[tier];
                 tierInfo.CurrentSkip = tierInfo.RecommendedSkip;
-                tierSkips[(int)tier] = tierInfo.RecommendedSkip;
+                profile.TierBases[(int)tier] = tierInfo.RecommendedSkip;
             }
 
             // Only store if at least one tier throttles
-            if (tierSkips[0] > 1 || tierSkips[1] > 1 || tierSkips[2] > 1 || tierSkips[3] > 1)
-                OptimizerConfig.ModOptSettings[mod.Name] = tierSkips;
+            if (profile.TierBases[0] > 1 || profile.TierBases[1] > 1
+                || profile.TierBases[2] > 1 || profile.TierBases[3] > 1)
+                OptimizerConfig.ModOptProfiles[mod.Name] = profile;
             else
-                OptimizerConfig.ModOptSettings.Remove(mod.Name);
+                OptimizerConfig.ModOptProfiles.Remove(mod.Name);
 
             OptimizerConfig.BuildModOptLookup();
         }
@@ -61,14 +64,14 @@ namespace ItemOptimizerMod
 
         private static void ClearModRules(ModInfo mod)
         {
-            OptimizerConfig.ModOptSettings.Remove(mod.Name);
+            OptimizerConfig.ModOptProfiles.Remove(mod.Name);
             OptimizerConfig.BuildModOptLookup();
             OptimizerConfig.AutoSave();
         }
 
         private static void ClearAllModRules()
         {
-            OptimizerConfig.ModOptSettings.Clear();
+            OptimizerConfig.ModOptProfiles.Clear();
             OptimizerConfig.BuildModOptLookup();
             OptimizerConfig.AutoSave();
             Rebuild();
@@ -97,6 +100,7 @@ namespace ItemOptimizerMod
         private static void BuildModControlSection(GUIComponent content)
         {
             SectionHeader(content, Localization.T("section_mod_control"));
+            _modPanelRefs.Clear();
 
             var mods = ScanMods();
             int totalMods = mods.Count;
@@ -138,6 +142,88 @@ namespace ItemOptimizerMod
                 Localization.Format("mods_optimized_summary", optimizedMods, totalMods),
                 font: GUIStyle.SmallFont,
                 textAlignment: Alignment.CenterRight);
+
+            // ── Global intensity slider ──
+            float avgIntensity = 0f;
+            int profileCount = 0;
+            foreach (var kvp in OptimizerConfig.ModOptProfiles)
+            {
+                avgIntensity += kvp.Value.Intensity;
+                profileCount++;
+            }
+            if (profileCount > 0) avgIntensity /= profileCount;
+
+            var globalIntFrame = new GUIFrame(
+                new RectTransform(new Vector2(1f, 0.045f), content.RectTransform),
+                style: null);
+            var globalIntRow = new GUILayoutGroup(
+                new RectTransform(Vector2.One, globalIntFrame.RectTransform),
+                isHorizontal: true)
+            {
+                Stretch = true,
+                RelativeSpacing = 0.005f
+            };
+
+            new GUITextBlock(
+                new RectTransform(new Vector2(0.15f, 1f), globalIntRow.RectTransform),
+                Localization.T("global_intensity_label"),
+                font: GUIStyle.SmallFont,
+                textColor: Color.Gold);
+
+            var globalIntSlider = new GUIScrollBar(
+                new RectTransform(new Vector2(0.35f, 0.8f), globalIntRow.RectTransform),
+                barSize: 0.05f, style: "GUISlider")
+            {
+                Range = new Vector2(0, 1),
+                BarScrollValue = avgIntensity,
+                StepValue = 0.05f
+            };
+
+            var globalIntPercent = new GUITextBlock(
+                new RectTransform(new Vector2(0.08f, 1f), globalIntRow.RectTransform),
+                $"{(int)(avgIntensity * 100)}%",
+                font: GUIStyle.SmallFont,
+                textAlignment: Alignment.Center);
+
+            var globalPreviewProfile = new ModOptProfile { Intensity = avgIntensity };
+            var globalIntPreview = new GUITextBlock(
+                new RectTransform(new Vector2(0.40f, 1f), globalIntRow.RectTransform),
+                FormatIntensityPreview(globalPreviewProfile),
+                font: GUIStyle.SmallFont,
+                textColor: Color.Gray);
+
+            globalIntSlider.OnMoved = (sb, val) =>
+            {
+                float intensity = (float)Math.Round(sb.BarScrollValue, 2);
+                globalIntPercent.Text = $"{(int)(intensity * 100)}%";
+                globalPreviewProfile.Intensity = intensity;
+                globalIntPreview.Text = FormatIntensityPreview(globalPreviewProfile);
+
+                foreach (var kvp in OptimizerConfig.ModOptProfiles)
+                    kvp.Value.Intensity = intensity;
+
+                foreach (var refs in _modPanelRefs)
+                {
+                    if (refs.IntensitySlider != null)
+                    {
+                        refs.IntensitySlider.BarScrollValue = intensity;
+                        refs.IntensityPercent.Text = $"{(int)(intensity * 100)}%";
+                    }
+                    if (OptimizerConfig.ModOptProfiles.TryGetValue(refs.ModName, out var prof))
+                    {
+                        if (refs.IntensityPreview != null)
+                            refs.IntensityPreview.Text = FormatIntensityPreview(prof);
+                        foreach (var (tierSlider, tierBox, tierInfo) in refs.TierControls)
+                        {
+                            int effective = prof.GetEffectiveSkip((int)tierInfo.Tier);
+                            tierSlider.BarScrollValue = effective;
+                            tierBox.Text = effective.ToString();
+                        }
+                    }
+                }
+                OptimizerConfig.BuildModOptLookup();
+                return true;
+            };
 
             // Per-mod panels
             foreach (var mod in mods)
@@ -230,15 +316,103 @@ namespace ItemOptimizerMod
                 }
             };
 
-            // Expanded: tier rows + detail
+            // Expanded: intensity slider + tier rows + detail
             if (!mod.IsExpanded) return;
 
+            // ── Intensity slider ──
+            OptimizerConfig.ModOptProfiles.TryGetValue(mod.Name, out var currentProfile);
+            float currentIntensity = currentProfile?.Intensity ?? 0f;
+
+            var intensityFrame = new GUIFrame(
+                new RectTransform(new Vector2(1f, 0.045f), content.RectTransform),
+                style: null);
+            var intensityRow = new GUILayoutGroup(
+                new RectTransform(Vector2.One, intensityFrame.RectTransform),
+                isHorizontal: true)
+            {
+                Stretch = true,
+                RelativeSpacing = 0.005f
+            };
+
+            new GUIFrame(
+                new RectTransform(new Vector2(0.03f, 1f), intensityRow.RectTransform),
+                style: null);
+
+            new GUITextBlock(
+                new RectTransform(new Vector2(0.10f, 1f), intensityRow.RectTransform),
+                Localization.T("intensity_label"),
+                font: GUIStyle.SmallFont,
+                textColor: Color.Cyan);
+
+            var intensitySlider = new GUIScrollBar(
+                new RectTransform(new Vector2(0.35f, 0.8f), intensityRow.RectTransform),
+                barSize: 0.05f, style: "GUISlider")
+            {
+                Range = new Vector2(0, 1),
+                BarScrollValue = currentIntensity,
+                StepValue = 0.05f
+            };
+
+            var intensityPercent = new GUITextBlock(
+                new RectTransform(new Vector2(0.08f, 1f), intensityRow.RectTransform),
+                $"{(int)(currentIntensity * 100)}%",
+                font: GUIStyle.SmallFont,
+                textAlignment: Alignment.Center);
+
+            // Preview text
+            var previewProfile = currentProfile ?? new ModOptProfile();
+            var previewText = new GUITextBlock(
+                new RectTransform(new Vector2(0.40f, 1f), intensityRow.RectTransform),
+                FormatIntensityPreview(previewProfile),
+                font: GUIStyle.SmallFont,
+                textColor: Color.Gray);
+
+            // Tier rows - collect control references
+            var tierControls = new List<(GUIScrollBar Slider, GUITextBox NumBox, ModTierInfo TierInfo)>();
             foreach (ActivityTier tier in Enum.GetValues(typeof(ActivityTier)))
             {
                 var tierInfo = mod.Tiers[tier];
                 if (tierInfo.Items.Count == 0) continue;
-                BuildTierRow(content, capturedMod, tierInfo);
+                var controls = BuildTierRow(content, capturedMod, tierInfo);
+                tierControls.Add(controls);
             }
+
+            // Connect intensity slider to tier controls
+            intensitySlider.OnMoved = (sb, val) =>
+            {
+                float intensity = (float)Math.Round(sb.BarScrollValue, 2);
+                intensityPercent.Text = $"{(int)(intensity * 100)}%";
+
+                if (!OptimizerConfig.ModOptProfiles.TryGetValue(capturedMod.Name, out var prof))
+                {
+                    prof = new ModOptProfile();
+                    foreach (ActivityTier t in Enum.GetValues(typeof(ActivityTier)))
+                        prof.TierBases[(int)t] = capturedMod.Tiers[t].CurrentSkip;
+                    OptimizerConfig.ModOptProfiles[capturedMod.Name] = prof;
+                }
+                prof.Intensity = intensity;
+                previewText.Text = FormatIntensityPreview(prof);
+
+                foreach (var (tierSlider, tierBox, tierInfo) in tierControls)
+                {
+                    int effective = prof.GetEffectiveSkip((int)tierInfo.Tier);
+                    tierSlider.BarScrollValue = effective;
+                    tierBox.Text = effective.ToString();
+                }
+
+                OptimizerConfig.BuildModOptLookup();
+                return true;
+            };
+
+            // Store refs for global slider
+            _modPanelRefs.Add(new ModPanelRefs
+            {
+                ModName = mod.Name,
+                IntensitySlider = intensitySlider,
+                IntensityPercent = intensityPercent,
+                IntensityPreview = previewText,
+                TierControls = tierControls
+            });
 
             // Detail toggle button
             var detailFrame = new GUIFrame(
@@ -300,12 +474,26 @@ namespace ItemOptimizerMod
             }
         }
 
-        private static void BuildTierRow(GUIComponent content, ModInfo mod, ModTierInfo tierInfo)
+        private static string FormatIntensityPreview(ModOptProfile profile)
+        {
+            return Localization.Format("intensity_preview",
+                profile.GetEffectiveSkip(0),
+                profile.GetEffectiveSkip(1),
+                profile.GetEffectiveSkip(2),
+                profile.GetEffectiveSkip(3));
+        }
+
+        private static (GUIScrollBar Slider, GUITextBox NumBox, ModTierInfo TierInfo) BuildTierRow(GUIComponent content, ModInfo mod, ModTierInfo tierInfo)
         {
             var meta = TierMeta[(int)tierInfo.Tier];
             var capturedMod = mod;
             var capturedTier = tierInfo;
             int configured = CountConfiguredInTier(tierInfo);
+
+            // Determine display value (effective if profile with intensity exists)
+            int displaySkip = tierInfo.CurrentSkip;
+            if (OptimizerConfig.ModOptProfiles.TryGetValue(mod.Name, out var existingProfile) && existingProfile.Intensity > 0)
+                displaySkip = existingProfile.GetEffectiveSkip((int)tierInfo.Tier);
 
             var tierFrame = new GUIFrame(
                 new RectTransform(new Vector2(1f, 0.045f), content.RectTransform),
@@ -337,7 +525,7 @@ namespace ItemOptimizerMod
                 font: GUIStyle.SmallFont,
                 textAlignment: Alignment.Center);
 
-            // "跳帧:" label
+            // "间隔:" label
             new GUITextBlock(
                 new RectTransform(new Vector2(0.06f, 1f), tierRow.RectTransform),
                 Localization.T("tier_skip_label"),
@@ -350,32 +538,60 @@ namespace ItemOptimizerMod
                 barSize: 0.07f, style: "GUISlider")
             {
                 Range = new Vector2(1, 15),
-                BarScrollValue = tierInfo.CurrentSkip,
+                BarScrollValue = displaySkip,
                 StepValue = 1
             };
 
-            // Number input
-            var numInput = new GUINumberInput(
-                new RectTransform(new Vector2(0.07f, 1f), tierRow.RectTransform),
-                NumberType.Int)
+            // Number box (GUITextBox instead of GUINumberInput for consistent layout)
+            var numBox = new GUITextBox(
+                new RectTransform(new Vector2(0.07f, 1f), tierRow.RectTransform))
             {
-                IntValue = tierInfo.CurrentSkip,
-                MinValueInt = 1,
-                MaxValueInt = 15
+                Text = displaySkip.ToString(),
+                OverflowClip = true
             };
 
-            // Bidirectional sync
+            // Slider → sets base, shows effective in numBox
             slider.OnMoved = (sb, val) =>
             {
                 int v = (int)Math.Round(sb.BarScrollValue);
                 capturedTier.CurrentSkip = v;
-                numInput.IntValue = v;
+                if (OptimizerConfig.ModOptProfiles.TryGetValue(capturedMod.Name, out var prof))
+                {
+                    prof.TierBases[(int)capturedTier.Tier] = v;
+                    int effective = prof.GetEffectiveSkip((int)capturedTier.Tier);
+                    numBox.Text = effective.ToString();
+                }
+                else
+                {
+                    numBox.Text = v.ToString();
+                }
                 return true;
             };
-            numInput.OnValueChanged = ni =>
+
+            // TextBox → sets base on deselect
+            numBox.OnDeselected += (sender, key) =>
             {
-                capturedTier.CurrentSkip = ni.IntValue;
-                slider.BarScrollValue = ni.IntValue;
+                if (int.TryParse(numBox.Text, out int v))
+                {
+                    v = Math.Clamp(v, 1, 15);
+                    capturedTier.CurrentSkip = v;
+                    if (OptimizerConfig.ModOptProfiles.TryGetValue(capturedMod.Name, out var prof))
+                    {
+                        prof.TierBases[(int)capturedTier.Tier] = v;
+                        int effective = prof.GetEffectiveSkip((int)capturedTier.Tier);
+                        numBox.Text = effective.ToString();
+                        slider.BarScrollValue = effective;
+                    }
+                    else
+                    {
+                        numBox.Text = v.ToString();
+                        slider.BarScrollValue = v;
+                    }
+                }
+                else
+                {
+                    numBox.Text = displaySkip.ToString();
+                }
             };
 
             // Status
@@ -400,6 +616,8 @@ namespace ItemOptimizerMod
                     return true;
                 }
             };
+
+            return (slider, numBox, tierInfo);
         }
 
         private static void BuildItemDetailRow(GUIComponent content, ModItemInfo item)
@@ -423,49 +641,17 @@ namespace ItemOptimizerMod
             // Display name (localized)
             string displayName = item.Prefab?.Name?.Value ?? item.Identifier;
             new GUITextBlock(
-                new RectTransform(new Vector2(0.20f, 1f), itemRow.RectTransform),
+                new RectTransform(new Vector2(0.22f, 1f), itemRow.RectTransform),
                 displayName,
                 font: GUIStyle.SmallFont,
                 textColor: Color.White);
 
             // Identifier
             new GUITextBlock(
-                new RectTransform(new Vector2(0.15f, 1f), itemRow.RectTransform),
+                new RectTransform(new Vector2(0.18f, 1f), itemRow.RectTransform),
                 item.Identifier,
                 font: GUIStyle.SmallFont,
                 textColor: Color.Gray);
-
-            // Thread safety tier (from analyzer)
-            if (ThreadSafetyAnalyzer.IsScanComplete)
-            {
-                var safetyInfo = ThreadSafetyAnalyzer.GetInfo(item.Identifier);
-                string tierLabel;
-                Color tierColor;
-                switch (safetyInfo.Tier)
-                {
-                    case ThreadSafetyTier.Safe:
-                        tierLabel = Localization.T("safety_safe");
-                        tierColor = Color.LimeGreen;
-                        break;
-                    case ThreadSafetyTier.Conditional:
-                        tierLabel = Localization.T("safety_conditional");
-                        tierColor = Color.Yellow;
-                        break;
-                    default:
-                        tierLabel = Localization.T("safety_unsafe");
-                        tierColor = new Color(220, 50, 50);
-                        break;
-                }
-                new GUITextBlock(
-                    new RectTransform(new Vector2(0.07f, 1f), itemRow.RectTransform),
-                    tierLabel,
-                    font: GUIStyle.SmallFont,
-                    textAlignment: Alignment.Center,
-                    textColor: tierColor)
-                {
-                    ToolTip = ThreadSafetyAnalyzer.GetFlagsText(safetyInfo.Flags)
-                };
-            }
 
             // Patterns
             string patternText = item.DetectedPatterns.Count > 0
@@ -480,9 +666,15 @@ namespace ItemOptimizerMod
             // ModOpt status
             bool hasModOpt = OptimizerConfig.ModOptLookup.TryGetValue(item.Identifier, out var skipFrames);
             bool hasManualRule = OptimizerConfig.RuleLookup.ContainsKey(item.Identifier);
+            bool isWhitelisted = OptimizerConfig.WhitelistLookup.Contains(item.Identifier);
             string ruleText;
             Color ruleColor;
-            if (hasManualRule)
+            if (isWhitelisted)
+            {
+                ruleText = "\u2605 Whitelist";
+                ruleColor = Color.Gold;
+            }
+            else if (hasManualRule)
             {
                 ruleText = "Manual";
                 ruleColor = Color.Cyan;
@@ -498,7 +690,7 @@ namespace ItemOptimizerMod
                 ruleColor = Color.Gray;
             }
             new GUITextBlock(
-                new RectTransform(new Vector2(0.13f, 1f), itemRow.RectTransform),
+                new RectTransform(new Vector2(0.15f, 1f), itemRow.RectTransform),
                 ruleText,
                 font: GUIStyle.SmallFont,
                 textColor: ruleColor);
@@ -507,7 +699,7 @@ namespace ItemOptimizerMod
             var capturedItem = item;
             if (hasManualRule)
             {
-                var removeBtn = new GUIButton(
+                new GUIButton(
                     new RectTransform(new Vector2(0.10f, 1f), itemRow.RectTransform),
                     Localization.T("btn_remove_rule"), Alignment.Center, "GUIButtonSmall")
                 {
@@ -523,7 +715,7 @@ namespace ItemOptimizerMod
             }
             else
             {
-                var addBtn = new GUIButton(
+                new GUIButton(
                     new RectTransform(new Vector2(0.10f, 1f), itemRow.RectTransform),
                     "+ " + Localization.T("mod_add_rule"), Alignment.Center, "GUIButtonSmall")
                 {
