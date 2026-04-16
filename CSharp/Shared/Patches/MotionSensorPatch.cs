@@ -24,6 +24,8 @@ namespace ItemOptimizerMod.Patches
 
         public static bool Prefix(MotionSensor __instance, float deltaTime)
         {
+            // Rewrite supersedes this patch — let vanilla run (rewrite prefix handles it)
+            if (OptimizerConfig.EnableMotionSensorRewrite) return true;
             if (!OptimizerConfig.EnableMotionSensorThrottle) return true;
 
             var counter = Counters.GetOrCreateValue(__instance);

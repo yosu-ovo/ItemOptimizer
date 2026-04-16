@@ -86,16 +86,23 @@ namespace ItemOptimizerMod.Patches
                 var otherHull = connectedGap.GetOtherLinkedHull(hull);
                 if (otherHull == null) continue;
 
-                // Call the recursive static method via reflection (private)
-                _recursiveMethod ??= AccessTools.Method(typeof(Gap),
-                    "SimulateWaterFlowFromOutsideToConnectedHullsRecursive");
-                _recursiveMethod?.Invoke(null, new object[] { otherHull, connectedGap, checkedHulls, hull, maxFlow, deltaTime });
+                // Call the recursive static method via compiled delegate (no boxing/alloc)
+                if (_recursiveDelegate == null)
+                {
+                    _recursiveMethod ??= AccessTools.Method(typeof(Gap),
+                        "SimulateWaterFlowFromOutsideToConnectedHullsRecursive");
+                    if (_recursiveMethod != null)
+                        _recursiveDelegate = (Action<Hull, Gap, HashSet<Hull>, Hull, float, float>)
+                            Delegate.CreateDelegate(typeof(Action<Hull, Gap, HashSet<Hull>, Hull, float, float>), _recursiveMethod);
+                }
+                _recursiveDelegate?.Invoke(otherHull, connectedGap, checkedHulls, hull, maxFlow, deltaTime);
             }
 
             return false; // skip original
         }
 
         private static MethodInfo _recursiveMethod;
+        private static Action<Hull, Gap, HashSet<Hull>, Hull, float, float> _recursiveDelegate;
 
         // ────────────────────────────────────────────────────────────
         //  Prefix: RefreshOutsideCollider

@@ -23,6 +23,8 @@ namespace ItemOptimizerMod.Patches
 
         public static bool Prefix(WaterDetector __instance)
         {
+            // Rewrite supersedes this patch — let vanilla run (rewrite prefix handles it)
+            if (OptimizerConfig.EnableWaterDetectorRewrite) return true;
             if (!OptimizerConfig.EnableWaterDetectorThrottle) return true;
 
             var state = States.GetOrCreateValue(__instance);
@@ -48,6 +50,7 @@ namespace ItemOptimizerMod.Patches
 
         public static void Postfix(WaterDetector __instance)
         {
+            if (OptimizerConfig.EnableWaterDetectorRewrite) return;
             if (!OptimizerConfig.EnableWaterDetectorThrottle) return;
 
             var state = States.GetOrCreateValue(__instance);
