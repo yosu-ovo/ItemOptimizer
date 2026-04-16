@@ -97,6 +97,7 @@ namespace ItemOptimizerMod
             _recordFrameIndex = 0;
             TargetFilter = targetFilter;
             _csvBuffer = new StringBuilder(1024 * 64);
+            DiagnosticHeader.WriteTo(_csvBuffer, frames);
             _csvBuffer.AppendLine("frame,identifier,package,time_ms,update_count,lane");
             FrameData.Clear();
             FrameLane.Clear();

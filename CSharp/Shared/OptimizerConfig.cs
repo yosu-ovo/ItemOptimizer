@@ -20,6 +20,24 @@ namespace ItemOptimizerMod
         public string Condition = "always"; // "always", "coldStorage", "notInActiveUse"
     }
 
+    /// <summary>
+    /// Per-mod optimization profile: tier base skip frames + intensity slider.
+    /// Intensity 0→use tier bases as-is, 1→all tiers converge to MaxSkip.
+    /// </summary>
+    public class ModOptProfile
+    {
+        public int[] TierBases = { 1, 3, 5, 8 };
+        public float Intensity = 0f;  // 0~1
+
+        public const int MaxSkip = 15;
+
+        public int GetEffectiveSkip(int tier)
+        {
+            int baseVal = TierBases[tier];
+            return baseVal + (int)Math.Round((MaxSkip - baseVal) * Intensity);
+        }
+    }
+
     static class OptimizerConfig
     {
         public static bool EnableColdStorageSkip = true;
@@ -29,31 +47,54 @@ namespace ItemOptimizerMod
         public static bool EnableMotionSensorThrottle = true;
         public static bool EnableWearableThrottle = true;
         public static bool EnableWaterDetectorThrottle = true;
-        public static bool EnableDoorThrottle = false;  // Disabled: saves only ~0.1ms but causes door rubber-banding
+        public static bool EnableDoorThrottle = true;
+        public static bool EnableMotionSensorRewrite = true;   // Replaces MotionSensorThrottle + MotionSensorOpt
+        public static bool EnableWaterDetectorRewrite = true;  // Replaces WaterDetectorThrottle + WaterDetectorOpt
+        public static bool EnableRelayRewrite = true;           // Replaces RelayOpt
+        public static bool EnablePowerTransferRewrite = true;   // JunctionBox etc.
+        public static bool EnablePowerContainerRewrite = true;  // Battery/Supercapacitor
+        public static bool EnableWireSkip = true;
         public static bool EnableHasStatusTagCache = true;
+        public static bool EnableHullSpatialIndex = true;   // Hull-based spatial pre-filtering for MotionSensor
         public static bool EnableStatusHUDThrottle = true;
         public static bool EnableAfflictionDedup = true;
 
         // ── Character optimization ──
         public static bool EnableAnimLOD = true;
-        public static bool EnableCharacterStagger = false;  // off by default — affects AI reaction time
-        public static int CharacterStaggerGroups = 3;       // 2-8
+        public static bool EnableCharacterStagger = true;
+        public static int CharacterStaggerGroups = 4;
         public static bool EnableLadderFix = true;          // fix ladder climbing desync (client-only)
         public static bool EnablePlatformFix = true;        // fix IgnorePlatforms desync (client-only)
 
-        public static int MotionSensorSkipFrames = 3;
+        public static int MotionSensorSkipFrames = 9;
         public static int WearableSkipFrames = 3;
-        public static int WaterDetectorSkipFrames = 3;
+        public static int WaterDetectorSkipFrames = 9;
         public static int DoorSkipFrames = 2;
         public static float StatusHUDScanInterval = 1.5f;
         public static int StatusHUDDrawSkipFrames = 3;
 
+        // Proxy item system (batch compute + sync architecture)
+        public static bool EnableProxySystem = true;
+
+        // ── Client optimization ──
+        public static bool EnableInteractionLabelOpt = true;
+        public static int InteractionLabelMaxCount = 50; // 10-200
+        public static bool EnableRelayOpt = true;
+        public static bool EnableMotionSensorOpt = true;
+        public static bool EnableWaterDetectorOpt = true;
+        public static bool EnableButtonTerminalOpt = true;
+        public static bool EnablePumpOpt = true;
+
         // Misc entity parallelism (Hull/Structure/Gap/Power — safe, no side effects)
         public static bool EnableMiscParallel = true;
 
-        // Parallel dispatch (item worker threads — experimental)
+        // Signal graph accelerator (0=Off, 1=Accelerate, 2=Aggressive)
+        public static int SignalGraphMode = 2;
+
+        // Parallel dispatch — REMOVED (experimental, incomplete)
+        // Fields kept for backward-compatible config loading only
         public static bool EnableParallelDispatch = false;
-        public static int ParallelWorkerCount = 2; // 1-6 worker threads
+        public static int ParallelWorkerCount = 2;
 
         // Spike detector (off by default — adds ~1-2ms overhead when enabled)
         public static bool EnableSpikeDetector = false;
@@ -70,13 +111,22 @@ namespace ItemOptimizerMod
         // Pre-compiled lookup tables for fast per-frame checks
         public static readonly Dictionary<string, ItemRule> RuleLookup = new();
 
+        // ── Whitelist (items that should never be throttled by ModOpt) ──
+        public static List<string> Whitelist = new();
+        public static HashSet<string> WhitelistLookup = new(StringComparer.Ordinal);
+
+        public static void RebuildWhitelistLookup()
+        {
+            WhitelistLookup = new HashSet<string>(Whitelist, StringComparer.Ordinal);
+        }
+
         // ── Mod Optimization (tier-based, separate from manual rules) ──
-        // Persistence: packageName → int[4] { criticalSkip, activeSkip, moderateSkip, staticSkip }
-        public static readonly Dictionary<string, int[]> ModOptSettings = new(StringComparer.Ordinal);
-        // Runtime flat lookup: identifier → skipFrames (built from ModOptSettings + prefab classification)
+        // Persistence: packageName → ModOptProfile { tierBases[4], intensity }
+        public static readonly Dictionary<string, ModOptProfile> ModOptProfiles = new(StringComparer.Ordinal);
+        // Runtime flat lookup: identifier → skipFrames (built from ModOptProfiles + prefab classification)
         public static volatile Dictionary<string, int> ModOptLookup = new(StringComparer.Ordinal);
 
-        // ── Thread safety manual overrides (identifier → tier: 0=Safe, 1=Conditional, 2=Unsafe) ──
+        // ── Thread safety manual overrides — REMOVED from UI but kept for backward compat loading ──
         public static readonly Dictionary<string, int> ThreadSafetyOverrides = new(StringComparer.Ordinal);
 
         /// <summary>
@@ -136,14 +186,14 @@ namespace ItemOptimizerMod
         }
 
         /// <summary>
-        /// Rebuild ModOptLookup from ModOptSettings by scanning all non-vanilla prefabs.
-        /// Only items whose package is in ModOptSettings get an entry.
-        /// Items with skipFrames=1 are excluded (no throttle needed).
+        /// Rebuild ModOptLookup from ModOptProfiles by scanning all non-vanilla prefabs.
+        /// Only items whose package is in ModOptProfiles get an entry.
+        /// Items with effective skipFrames &lt;= 1 are excluded (no throttle needed).
         /// </summary>
         public static void BuildModOptLookup()
         {
             var newLookup = new Dictionary<string, int>(StringComparer.Ordinal);
-            if (ModOptSettings.Count == 0)
+            if (ModOptProfiles.Count == 0)
             {
                 ModOptLookup = newLookup;
                 return;
@@ -154,10 +204,10 @@ namespace ItemOptimizerMod
                 var pkg = prefab.ContentPackage;
                 if (pkg == null || pkg == ContentPackageManager.VanillaCorePackage) continue;
 
-                if (!ModOptSettings.TryGetValue(pkg.Name, out var tierSkips)) continue;
+                if (!ModOptProfiles.TryGetValue(pkg.Name, out var profile)) continue;
 
                 int tier = ClassifyItemPrefab(prefab);
-                int skip = tierSkips[tier];
+                int skip = profile.GetEffectiveSkip(tier);
                 if (skip <= 1) continue; // no throttle
 
                 newLookup[prefab.Identifier.Value] = skip;
@@ -213,6 +263,7 @@ namespace ItemOptimizerMod
 
                 var modOptElement = SerializeModOpt();
                 var rulesElement = SerializeItemRules();
+                var whitelistElement = SerializeWhitelist();
 
                 var modsElement = new XElement("EnabledMods");
                 foreach (var pkg in ContentPackageManager.EnabledPackages.All)
@@ -221,19 +272,13 @@ namespace ItemOptimizerMod
                     modsElement.Add(new XElement("Mod", new XAttribute("name", pkg.Name)));
                 }
 
-                var overridesElement = new XElement("ThreadSafetyOverrides");
-                foreach (var kv in ThreadSafetyOverrides)
-                    overridesElement.Add(new XElement("Item",
-                        new XAttribute("id", kv.Key),
-                        new XAttribute("tier", kv.Value)));
-
                 var doc = new XDocument(
                     new XElement("OptimizerProfile",
                         new XAttribute("hash", GetModSetHash()),
                         modsElement,
                         modOptElement,
                         rulesElement,
-                        overridesElement));
+                        whitelistElement));
                 doc.Save(GetProfilePath());
             }
             catch (Exception e)
@@ -255,30 +300,11 @@ namespace ItemOptimizerMod
 
                 DeserializeModOpt(root);
                 DeserializeItemRules(root);
+                DeserializeWhitelist(root);
 
                 BuildLookupTables();
                 BuildModOptLookup();
-
-                // Load thread safety overrides
-                ThreadSafetyOverrides.Clear();
-                var overridesEl = root.Element("ThreadSafetyOverrides");
-                if (overridesEl != null)
-                {
-                    foreach (var el in overridesEl.Elements("Item"))
-                    {
-                        var id = el.Attribute("id")?.Value;
-                        var tierStr = el.Attribute("tier")?.Value;
-                        if (!string.IsNullOrWhiteSpace(id) && int.TryParse(tierStr, out int tierVal)
-                            && tierVal >= 0 && tierVal <= 2)
-                        {
-                            ThreadSafetyOverrides[id] = tierVal;
-                        }
-                    }
-                }
-                // Sync overrides to analyzer
-                ThreadSafetyAnalyzer.Overrides.Clear();
-                foreach (var kv in ThreadSafetyOverrides)
-                    ThreadSafetyAnalyzer.Overrides[kv.Key] = (ThreadSafetyTier)kv.Value;
+                RebuildWhitelistLookup();
             }
             catch (Exception e)
             {
@@ -368,6 +394,34 @@ namespace ItemOptimizerMod
                 if (hst != null)
                     EnableHasStatusTagCache = ParseBool(hst.Attribute("enabled")?.Value, true);
 
+                var hsi = root.Element("HullSpatialIndex");
+                if (hsi != null)
+                    EnableHullSpatialIndex = ParseBool(hsi.Attribute("enabled")?.Value, true);
+
+                var wsk = root.Element("WireSkip");
+                if (wsk != null)
+                    EnableWireSkip = ParseBool(wsk.Attribute("enabled")?.Value, false);
+
+                var msRw = root.Element("MotionSensorRewrite");
+                if (msRw != null)
+                    EnableMotionSensorRewrite = ParseBool(msRw.Attribute("enabled")?.Value, true);
+
+                var wdRw = root.Element("WaterDetectorRewrite");
+                if (wdRw != null)
+                    EnableWaterDetectorRewrite = ParseBool(wdRw.Attribute("enabled")?.Value, true);
+
+                var relayRw = root.Element("RelayRewrite");
+                if (relayRw != null)
+                    EnableRelayRewrite = ParseBool(relayRw.Attribute("enabled")?.Value, true);
+
+                var ptRw = root.Element("PowerTransferRewrite");
+                if (ptRw != null)
+                    EnablePowerTransferRewrite = ParseBool(ptRw.Attribute("enabled")?.Value, true);
+
+                var pcRw = root.Element("PowerContainerRewrite");
+                if (pcRw != null)
+                    EnablePowerContainerRewrite = ParseBool(pcRw.Attribute("enabled")?.Value, true);
+
                 var shud = root.Element("StatusHUDThrottle");
                 if (shud != null)
                 {
@@ -406,12 +460,43 @@ namespace ItemOptimizerMod
                     SpikeThresholdMs = ParseFloat(spike.Attribute("thresholdMs")?.Value, 30f, 5f, 1000f);
                 }
 
+                var sga = root.Element("SignalGraphAccel");
+                if (sga != null)
+                    SignalGraphMode = ParseInt(sga.Attribute("mode")?.Value, 0, 0, 2);
+
                 var pd = root.Element("ParallelDispatch");
                 if (pd != null)
                 {
                     EnableParallelDispatch = ParseBool(pd.Attribute("enabled")?.Value, false);
                     ParallelWorkerCount = ParseInt(pd.Attribute("workers")?.Value, 2, 1, 6);
                 }
+
+                var proxy = root.Element("ProxySystem");
+                if (proxy != null)
+                    EnableProxySystem = bool.TryParse(proxy.Attribute("enabled")?.Value, out var v) ? v : true;
+
+                var intLabel = root.Element("InteractionLabel");
+                if (intLabel != null)
+                {
+                    EnableInteractionLabelOpt = ParseBool(intLabel.Attribute("enabled")?.Value, true);
+                    InteractionLabelMaxCount = ParseInt(intLabel.Attribute("maxCount")?.Value, 50, 10, 200);
+                }
+
+                var relayOpt = root.Element("RelayOpt");
+                if (relayOpt != null)
+                    EnableRelayOpt = ParseBool(relayOpt.Attribute("enabled")?.Value, true);
+                var motionOpt = root.Element("MotionSensorOpt");
+                if (motionOpt != null)
+                    EnableMotionSensorOpt = ParseBool(motionOpt.Attribute("enabled")?.Value, true);
+                var waterDetOpt = root.Element("WaterDetectorOpt");
+                if (waterDetOpt != null)
+                    EnableWaterDetectorOpt = ParseBool(waterDetOpt.Attribute("enabled")?.Value, true);
+                var btnTermOpt = root.Element("ButtonTerminalOpt");
+                if (btnTermOpt != null)
+                    EnableButtonTerminalOpt = ParseBool(btnTermOpt.Attribute("enabled")?.Value, true);
+                var pumpOpt = root.Element("PumpOpt");
+                if (pumpOpt != null)
+                    EnablePumpOpt = ParseBool(pumpOpt.Attribute("enabled")?.Value, true);
 
                 var mp = root.Element("MiscParallel");
                 if (mp != null)
@@ -429,11 +514,10 @@ namespace ItemOptimizerMod
 
                 DeserializeItemRules(root);
                 DeserializeModOpt(root);
+                DeserializeWhitelist(root);
 
-                // Load profile (overrides ItemRules + ModOpt if profile exists)
+                // Load profile (overrides ItemRules + ModOpt + Whitelist if profile exists)
                 LoadProfile();
-                // Attempt to load thread safety cache
-                ThreadSafetyAnalyzer.LoadCache();
             }
             catch (Exception e)
             {
@@ -447,6 +531,7 @@ namespace ItemOptimizerMod
             {
                 var rulesElement = SerializeItemRules();
                 var modOptElement = SerializeModOpt();
+                var whitelistElement = SerializeWhitelist();
 
                 var doc = new XDocument(
                     new XElement("ItemOptimizerConfig",
@@ -471,12 +556,26 @@ namespace ItemOptimizerMod
                             new XAttribute("skipFrames", DoorSkipFrames)),
                         new XElement("HasStatusTagCache",
                             new XAttribute("enabled", EnableHasStatusTagCache)),
+                        new XElement("HullSpatialIndex",
+                            new XAttribute("enabled", EnableHullSpatialIndex)),
                         new XElement("StatusHUDThrottle",
                             new XAttribute("enabled", EnableStatusHUDThrottle),
                             new XAttribute("scanInterval", StatusHUDScanInterval),
                             new XAttribute("drawSkipFrames", StatusHUDDrawSkipFrames)),
                         new XElement("AfflictionDedup",
                             new XAttribute("enabled", EnableAfflictionDedup)),
+                        new XElement("WireSkip",
+                            new XAttribute("enabled", EnableWireSkip)),
+                        new XElement("MotionSensorRewrite",
+                            new XAttribute("enabled", EnableMotionSensorRewrite)),
+                        new XElement("WaterDetectorRewrite",
+                            new XAttribute("enabled", EnableWaterDetectorRewrite)),
+                        new XElement("RelayRewrite",
+                            new XAttribute("enabled", EnableRelayRewrite)),
+                        new XElement("PowerTransferRewrite",
+                            new XAttribute("enabled", EnablePowerTransferRewrite)),
+                        new XElement("PowerContainerRewrite",
+                            new XAttribute("enabled", EnablePowerContainerRewrite)),
                         new XElement("AnimLOD",
                             new XAttribute("enabled", EnableAnimLOD)),
                         new XElement("CharacterStagger",
@@ -489,9 +588,26 @@ namespace ItemOptimizerMod
                         new XElement("SpikeDetector",
                             new XAttribute("enabled", EnableSpikeDetector),
                             new XAttribute("thresholdMs", SpikeThresholdMs)),
+                        new XElement("SignalGraphAccel",
+                            new XAttribute("mode", SignalGraphMode)),
                         new XElement("ParallelDispatch",
                             new XAttribute("enabled", EnableParallelDispatch),
                             new XAttribute("workers", ParallelWorkerCount)),
+                        new XElement("ProxySystem",
+                            new XAttribute("enabled", EnableProxySystem)),
+                        new XElement("InteractionLabel",
+                            new XAttribute("enabled", EnableInteractionLabelOpt),
+                            new XAttribute("maxCount", InteractionLabelMaxCount)),
+                        new XElement("RelayOpt",
+                            new XAttribute("enabled", EnableRelayOpt)),
+                        new XElement("MotionSensorOpt",
+                            new XAttribute("enabled", EnableMotionSensorOpt)),
+                        new XElement("WaterDetectorOpt",
+                            new XAttribute("enabled", EnableWaterDetectorOpt)),
+                        new XElement("ButtonTerminalOpt",
+                            new XAttribute("enabled", EnableButtonTerminalOpt)),
+                        new XElement("PumpOpt",
+                            new XAttribute("enabled", EnablePumpOpt)),
                         new XElement("MiscParallel",
                             new XAttribute("enabled", EnableMiscParallel)),
                         new XElement("ServerOptimization",
@@ -499,7 +615,8 @@ namespace ItemOptimizerMod
                             new XAttribute("metricInterval", MetricSendInterval),
                             new XAttribute("allowClientSync", AllowClientSync)),
                         rulesElement,
-                        modOptElement
+                        modOptElement,
+                        whitelistElement
                     ));
                 doc.Save(GetConfigPath());
             }
@@ -539,14 +656,17 @@ namespace ItemOptimizerMod
         private static XElement SerializeModOpt()
         {
             var el = new XElement("ModOptimization");
-            foreach (var kv in ModOptSettings)
+            foreach (var kv in ModOptProfiles)
             {
+                var profile = kv.Value;
                 el.Add(new XElement("Mod",
                     new XAttribute("name", kv.Key),
-                    new XAttribute("critical", kv.Value[0]),
-                    new XAttribute("active", kv.Value[1]),
-                    new XAttribute("moderate", kv.Value[2]),
-                    new XAttribute("static", kv.Value[3])));
+                    new XAttribute("critical", profile.TierBases[0]),
+                    new XAttribute("active", profile.TierBases[1]),
+                    new XAttribute("moderate", profile.TierBases[2]),
+                    new XAttribute("static", profile.TierBases[3]),
+                    new XAttribute("intensity", profile.Intensity.ToString("F2",
+                        System.Globalization.CultureInfo.InvariantCulture))));
             }
             return el;
         }
@@ -575,21 +695,52 @@ namespace ItemOptimizerMod
 
         private static void DeserializeModOpt(XElement root)
         {
-            ModOptSettings.Clear();
+            ModOptProfiles.Clear();
             var modOptElement = root.Element("ModOptimization");
             if (modOptElement == null) return;
             foreach (var modEl in modOptElement.Elements("Mod"))
             {
                 var name = modEl.Attribute("name")?.Value;
                 if (string.IsNullOrWhiteSpace(name)) continue;
-                ModOptSettings[name] = new int[]
+                var profile = new ModOptProfile
                 {
-                    ParseInt(modEl.Attribute("critical")?.Value, 1, 1, 15),
-                    ParseInt(modEl.Attribute("active")?.Value, 3, 1, 15),
-                    ParseInt(modEl.Attribute("moderate")?.Value, 5, 1, 15),
-                    ParseInt(modEl.Attribute("static")?.Value, 8, 1, 15)
+                    TierBases = new int[]
+                    {
+                        ParseInt(modEl.Attribute("critical")?.Value, 1, 1, 15),
+                        ParseInt(modEl.Attribute("active")?.Value, 3, 1, 15),
+                        ParseInt(modEl.Attribute("moderate")?.Value, 5, 1, 15),
+                        ParseInt(modEl.Attribute("static")?.Value, 8, 1, 15)
+                    },
+                    // Backward compat: old configs have no intensity attribute → defaults to 0
+                    Intensity = ParseFloat(modEl.Attribute("intensity")?.Value, 0f, 0f, 1f)
                 };
+                ModOptProfiles[name] = profile;
             }
+        }
+
+        private static XElement SerializeWhitelist()
+        {
+            var el = new XElement("Whitelist");
+            foreach (var id in Whitelist)
+            {
+                if (string.IsNullOrWhiteSpace(id)) continue;
+                el.Add(new XElement("Item", new XAttribute("identifier", id)));
+            }
+            return el;
+        }
+
+        private static void DeserializeWhitelist(XElement root)
+        {
+            Whitelist.Clear();
+            var whitelistElement = root.Element("Whitelist");
+            if (whitelistElement == null) return;
+            foreach (var itemEl in whitelistElement.Elements("Item"))
+            {
+                var id = itemEl.Attribute("identifier")?.Value;
+                if (!string.IsNullOrWhiteSpace(id))
+                    Whitelist.Add(id);
+            }
+            RebuildWhitelistLookup();
         }
 
         private static bool ParseBool(string val, bool def)

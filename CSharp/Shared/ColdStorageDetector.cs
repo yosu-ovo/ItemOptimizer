@@ -26,8 +26,10 @@ namespace ItemOptimizerMod
         }
 
         /// <summary>
-        /// Aggressive: item is not actively held in a character's hand slots.
-        /// Catches items in inventory/backpack/bag slots too.
+        /// Aggressive: item is not actively held or worn by a character.
+        /// Hand slots + equipment slots (head/armor/headset) count as active use,
+        /// because worn items apply per-frame StatusEffects (e.g. SpeedMultiplier)
+        /// that break if Update() is throttled.
         /// </summary>
         public static bool IsNotInActiveUse(Item item)
         {
@@ -38,13 +40,18 @@ namespace ItemOptimizerMod
 
             var topItem = item.RootContainer ?? item;
             return !character.HasEquippedItem(topItem,
-                predicate: slot => (slot & (InvSlotType.LeftHand | InvSlotType.RightHand)) != InvSlotType.None);
+                predicate: slot => (slot & (InvSlotType.LeftHand | InvSlotType.RightHand
+                    | InvSlotType.Head | InvSlotType.InnerClothes
+                    | InvSlotType.OuterClothes | InvSlotType.Headset)) != InvSlotType.None);
         }
 
         /// <summary>
         /// For ModOpt: item is eligible for throttling.
-        /// Covers both inventory items (not in hands) and submarine-installed items
-        /// not currently being used by any character.
+        /// Covers inventory items not in hands or equipment slots,
+        /// and submarine-installed items not currently being used.
+        /// Worn equipment (head/armor/headset) is excluded because their
+        /// Wearable.Update → ApplyStatusEffects(OnWearing) must run every frame
+        /// (SpeedMultiplier resets each frame).
         /// </summary>
         public static bool IsModOptEligible(Item item)
         {
@@ -55,8 +62,19 @@ namespace ItemOptimizerMod
                 if (rootOwner is not Character character) return true; // in a locker/crate
 
                 var topItem = item.RootContainer ?? item;
-                return !character.HasEquippedItem(topItem,
-                    predicate: slot => (slot & (InvSlotType.LeftHand | InvSlotType.RightHand)) != InvSlotType.None);
+
+                // Don't throttle hand-held items
+                if (character.HasEquippedItem(topItem,
+                    predicate: slot => (slot & (InvSlotType.LeftHand | InvSlotType.RightHand)) != InvSlotType.None))
+                    return false;
+
+                // Don't throttle worn equipment (armor/helmet/headset provide per-frame effects)
+                if (character.HasEquippedItem(topItem,
+                    predicate: slot => (slot & (InvSlotType.Head | InvSlotType.InnerClothes
+                        | InvSlotType.OuterClothes | InvSlotType.Headset)) != InvSlotType.None))
+                    return false;
+
+                return true; // backpack/bag items can be throttled
             }
 
             // Submarine-installed items: throttle if nobody is using them
