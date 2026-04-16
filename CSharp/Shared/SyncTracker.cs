@@ -12,26 +12,34 @@ namespace ItemOptimizerMod
     /// Server–client synchronization tracker.
     /// Captures entity states + positions AND character positions from server,
     /// compares against client local state, logs desyncs to CSV.
+    ///
+    /// Refactored to match PerfProfiler pattern: StringBuilder buffer, flush at end.
     /// </summary>
     static class SyncTracker
     {
         // ── Recording state ──
         internal static bool IsRecording;
-        internal static int FramesRemaining;
+        internal static int MaxFrames;
         internal static string OutputPath;
 
         // ── Snapshot data (received from server, compared on client) ──
         internal static readonly List<EntitySnapshot> LastServerSnapshot = new();
         internal static readonly List<CharacterSnapshot> LastCharacterSnapshot = new();
 
-        // ── Client-side desync log ──
-        private static StreamWriter _entityWriter;
-        private static StreamWriter _charWriter;
+        // ── Client-side CSV buffers (StringBuilder, flushed at end) ──
+        private static StringBuilder _entityBuffer;
+        private static StringBuilder _charBuffer;
         private static int _frameIndex;
         private static int _totalDesyncs;
         private static int _totalSamples;
         private static int _totalPosDesyncs;
         private static int _totalPosSamples;
+        private static string _entityPath;
+        private static string _charPath;
+
+        // ── Timeout: auto-stop if no ticks received for N seconds ──
+        private static float _timeSinceLastTick;
+        private const float TimeoutSeconds = 5f;
 
         internal struct EntitySnapshot
         {
@@ -63,80 +71,76 @@ namespace ItemOptimizerMod
         /// <summary>Start recording on the client side.</summary>
         internal static void StartRecording(int frames, string path)
         {
-            // Force-close any previous recording that wasn't cleaned up
-            // (e.g. disconnect mid-recording leaves file handles open)
-            if (IsRecording || _entityWriter != null || _charWriter != null)
+            // Force-close any previous recording
+            if (IsRecording)
             {
-                LuaCsLogger.Log("[ItemOptimizer] SyncTracker: force-closing previous recording");
-                ForceClose();
+                LuaCsLogger.Log("[ItemOptimizer] SyncTracker: force-flushing previous recording");
+                FlushAndStop();
             }
 
             string basePath = PerfProfiler.ResolvePath(path);
-            // Strip extension to create two files
             string dir = Path.GetDirectoryName(basePath) ?? ".";
             string name = Path.GetFileNameWithoutExtension(basePath);
 
-            string entityPath = Path.Combine(dir, name + "_entities.csv");
-            string charPath = Path.Combine(dir, name + "_characters.csv");
-            OutputPath = entityPath; // primary output for summary
+            _entityPath = Path.Combine(dir, name + "_entities.csv");
+            _charPath = Path.Combine(dir, name + "_characters.csv");
+            OutputPath = _entityPath;
 
-            FramesRemaining = frames;
+            MaxFrames = Math.Clamp(frames, 1, 3600);
             _frameIndex = 0;
             _totalDesyncs = 0;
             _totalSamples = 0;
             _totalPosDesyncs = 0;
             _totalPosSamples = 0;
+            _timeSinceLastTick = 0;
 
-            try
+            // Initialize StringBuilder buffers with CSV headers
+            _entityBuffer = new StringBuilder(1024 * 64);
+            _entityBuffer.AppendLine("frame,item_id,type," +
+                "s_flags,c_flags," +
+                "s_value,c_value," +
+                "s_x,s_y,c_x,c_y," +
+                "flag_desync,val_delta,pos_delta");
+
+            _charBuffer = new StringBuilder(1024 * 16);
+            _charBuffer.AppendLine("frame,char_id,char_name," +
+                "s_x,s_y,c_x,c_y," +
+                "s_vx,s_vy,c_vx,c_vy," +
+                "s_flags,c_flags," +
+                "pos_delta,vel_delta,flag_desync");
+
+            IsRecording = true;
+        }
+
+        /// <summary>
+        /// Called each game update frame to check timeout.
+        /// Should be called from the main update loop when recording is active.
+        /// </summary>
+        internal static void UpdateTimeout(float dt)
+        {
+            if (!IsRecording) return;
+
+            _timeSinceLastTick += dt;
+            if (_timeSinceLastTick > TimeoutSeconds && _frameIndex > 0)
             {
-                _entityWriter = new StreamWriter(entityPath, false, Encoding.UTF8, 65536);
-                _entityWriter.WriteLine("frame,item_id,type," +
-                    "s_flags,c_flags," +
-                    "s_value,c_value," +
-                    "s_x,s_y,c_x,c_y," +
-                    "flag_desync,val_delta,pos_delta");
-
-                _charWriter = new StreamWriter(charPath, false, Encoding.UTF8, 65536);
-                _charWriter.WriteLine("frame,char_id,char_name," +
-                    "s_x,s_y,c_x,c_y," +
-                    "s_vx,s_vy,c_vx,c_vy," +
-                    "s_flags,c_flags," +
-                    "pos_delta,vel_delta,flag_desync");
-
-                IsRecording = true;
-            }
-            catch (Exception e)
-            {
-                LuaCsLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
-                IsRecording = false;
+                LuaCsLogger.Log($"[ItemOptimizer] SyncTracker: timeout ({TimeoutSeconds}s without data), flushing {_frameIndex} frames");
+                FlushAndStop();
             }
         }
 
         /// <summary>
         /// Called on client when server snapshot is received — compare against local state.
+        /// Client counts received ticks; stops after MaxFrames received.
         /// </summary>
         internal static void ClientTick()
         {
             if (!IsRecording) return;
 
             _frameIndex++;
-            FramesRemaining--;
-
-            // Diagnostic: log character snapshot info for first 3 frames
-            if (_frameIndex <= 3)
-            {
-                LuaCsLogger.Log($"[ItemOptimizer] SyncTracker frame {_frameIndex}: " +
-                    $"entities={LastServerSnapshot.Count}, chars={LastCharacterSnapshot.Count}");
-                foreach (var cs in LastCharacterSnapshot)
-                {
-                    var dbgEntity = Entity.FindEntityByID(cs.CharId);
-                    LuaCsLogger.Log($"  char ID={cs.CharId} -> {dbgEntity?.GetType().Name ?? "NULL"} " +
-                        $"({(dbgEntity is Character c ? c.Name : "?")})");
-                }
-            }
+            _timeSinceLastTick = 0;
 
             // ── Entity comparison ──
-            if (_entityWriter != null)
+            if (_entityBuffer != null)
             {
                 foreach (var ss in LastServerSnapshot)
                 {
@@ -212,25 +216,25 @@ namespace ItemOptimizerMod
                     _totalPosSamples++;
                     if (posDelta > 1f) _totalPosDesyncs++;
 
-                    _entityWriter.Write(_frameIndex); _entityWriter.Write(',');
-                    _entityWriter.Write(ss.ItemId); _entityWriter.Write(',');
-                    _entityWriter.Write(typeName); _entityWriter.Write(',');
-                    _entityWriter.Write(ss.Flags); _entityWriter.Write(',');
-                    _entityWriter.Write(clientFlags); _entityWriter.Write(',');
-                    _entityWriter.Write(ss.Value.ToString("F4")); _entityWriter.Write(',');
-                    _entityWriter.Write(clientValue.ToString("F4")); _entityWriter.Write(',');
-                    _entityWriter.Write(ss.PosX.ToString("F1")); _entityWriter.Write(',');
-                    _entityWriter.Write(ss.PosY.ToString("F1")); _entityWriter.Write(',');
-                    _entityWriter.Write(clientX.ToString("F1")); _entityWriter.Write(',');
-                    _entityWriter.Write(clientY.ToString("F1")); _entityWriter.Write(',');
-                    _entityWriter.Write(flagDesync ? 1 : 0); _entityWriter.Write(',');
-                    _entityWriter.Write(valDelta.ToString("F4")); _entityWriter.Write(',');
-                    _entityWriter.WriteLine(posDelta.ToString("F2"));
+                    _entityBuffer.Append(_frameIndex).Append(',');
+                    _entityBuffer.Append(ss.ItemId).Append(',');
+                    _entityBuffer.Append(typeName).Append(',');
+                    _entityBuffer.Append(ss.Flags).Append(',');
+                    _entityBuffer.Append(clientFlags).Append(',');
+                    _entityBuffer.Append(ss.Value.ToString("F4")).Append(',');
+                    _entityBuffer.Append(clientValue.ToString("F4")).Append(',');
+                    _entityBuffer.Append(ss.PosX.ToString("F1")).Append(',');
+                    _entityBuffer.Append(ss.PosY.ToString("F1")).Append(',');
+                    _entityBuffer.Append(clientX.ToString("F1")).Append(',');
+                    _entityBuffer.Append(clientY.ToString("F1")).Append(',');
+                    _entityBuffer.Append(flagDesync ? 1 : 0).Append(',');
+                    _entityBuffer.Append(valDelta.ToString("F4")).Append(',');
+                    _entityBuffer.AppendLine(posDelta.ToString("F2"));
                 }
             }
 
             // ── Character comparison ──
-            if (_charWriter != null)
+            if (_charBuffer != null)
             {
                 foreach (var cs in LastCharacterSnapshot)
                 {
@@ -261,40 +265,70 @@ namespace ItemOptimizerMod
 
                     string charName = character.Name?.Replace(',', '_') ?? "?";
 
-                    _charWriter.Write(_frameIndex); _charWriter.Write(',');
-                    _charWriter.Write(cs.CharId); _charWriter.Write(',');
-                    _charWriter.Write(charName); _charWriter.Write(',');
-                    _charWriter.Write(cs.PosX.ToString("F1")); _charWriter.Write(',');
-                    _charWriter.Write(cs.PosY.ToString("F1")); _charWriter.Write(',');
-                    _charWriter.Write(cx.ToString("F1")); _charWriter.Write(',');
-                    _charWriter.Write(cy.ToString("F1")); _charWriter.Write(',');
-                    _charWriter.Write(cs.VelX.ToString("F3")); _charWriter.Write(',');
-                    _charWriter.Write(cs.VelY.ToString("F3")); _charWriter.Write(',');
-                    _charWriter.Write(cvx.ToString("F3")); _charWriter.Write(',');
-                    _charWriter.Write(cvy.ToString("F3")); _charWriter.Write(',');
-                    _charWriter.Write(cs.Flags); _charWriter.Write(',');
-                    _charWriter.Write(cFlags); _charWriter.Write(',');
-                    _charWriter.Write(posDelta.ToString("F2")); _charWriter.Write(',');
-                    _charWriter.Write(velDelta.ToString("F3")); _charWriter.Write(',');
-                    _charWriter.WriteLine(flagDesync ? 1 : 0);
+                    _charBuffer.Append(_frameIndex).Append(',');
+                    _charBuffer.Append(cs.CharId).Append(',');
+                    _charBuffer.Append(charName).Append(',');
+                    _charBuffer.Append(cs.PosX.ToString("F1")).Append(',');
+                    _charBuffer.Append(cs.PosY.ToString("F1")).Append(',');
+                    _charBuffer.Append(cx.ToString("F1")).Append(',');
+                    _charBuffer.Append(cy.ToString("F1")).Append(',');
+                    _charBuffer.Append(cs.VelX.ToString("F3")).Append(',');
+                    _charBuffer.Append(cs.VelY.ToString("F3")).Append(',');
+                    _charBuffer.Append(cvx.ToString("F3")).Append(',');
+                    _charBuffer.Append(cvy.ToString("F3")).Append(',');
+                    _charBuffer.Append(cs.Flags).Append(',');
+                    _charBuffer.Append(cFlags).Append(',');
+                    _charBuffer.Append(posDelta.ToString("F2")).Append(',');
+                    _charBuffer.Append(velDelta.ToString("F3")).Append(',');
+                    _charBuffer.Append(flagDesync ? "1" : "0").AppendLine();
                 }
             }
 
-            if (FramesRemaining <= 0)
+            if (_frameIndex >= MaxFrames)
             {
-                StopRecording();
+                FlushAndStop();
             }
         }
 
-        internal static void StopRecording()
+        /// <summary>Flush buffers to file and stop recording. Safe to call multiple times.</summary>
+        internal static void FlushAndStop()
         {
+            if (!IsRecording && _entityBuffer == null) return;
+
             IsRecording = false;
-            _entityWriter?.Flush();
-            _entityWriter?.Dispose();
-            _entityWriter = null;
-            _charWriter?.Flush();
-            _charWriter?.Dispose();
-            _charWriter = null;
+
+            // Flush entity CSV
+            if (_entityBuffer != null && _entityPath != null)
+            {
+                try
+                {
+                    string dir = Path.GetDirectoryName(_entityPath);
+                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                    File.WriteAllText(_entityPath, _entityBuffer.ToString());
+                }
+                catch (Exception e)
+                {
+                    LuaCsLogger.LogError($"[ItemOptimizer] Failed to write entity CSV: {e.Message}");
+                }
+            }
+
+            // Flush character CSV
+            if (_charBuffer != null && _charPath != null)
+            {
+                try
+                {
+                    string dir = Path.GetDirectoryName(_charPath);
+                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                    File.WriteAllText(_charPath, _charBuffer.ToString());
+                }
+                catch (Exception e)
+                {
+                    LuaCsLogger.LogError($"[ItemOptimizer] Failed to write character CSV: {e.Message}");
+                }
+            }
+
+            _entityBuffer = null;
+            _charBuffer = null;
 
             float syncRate = _totalSamples > 0
                 ? (1f - (float)_totalDesyncs / _totalSamples) * 100f
@@ -303,7 +337,7 @@ namespace ItemOptimizerMod
                 ? (1f - (float)_totalPosDesyncs / _totalPosSamples) * 100f
                 : 100f;
 
-            string summary = $"[ItemOptimizer] Sync done: {_frameIndex} frames, " +
+            string summary = $"[ItemOptimizer] Sync done: {_frameIndex}/{MaxFrames} frames, " +
                 $"state sync: {syncRate:F1}% ({_totalDesyncs}/{_totalSamples} desyncs), " +
                 $"pos sync: {posSyncRate:F1}% ({_totalPosDesyncs}/{_totalPosSamples} off>1px) " +
                 $"-> {OutputPath}";
@@ -433,25 +467,14 @@ namespace ItemOptimizerMod
 
         internal static void Reset()
         {
-            ForceClose();
+            IsRecording = false;
+            MaxFrames = 0;
+            _entityBuffer = null;
+            _charBuffer = null;
+            _frameIndex = 0;
+            _timeSinceLastTick = 0;
             LastServerSnapshot.Clear();
             LastCharacterSnapshot.Clear();
-        }
-
-        /// <summary>
-        /// Unconditionally close file handles + reset state.
-        /// Safe to call even when not recording.
-        /// </summary>
-        internal static void ForceClose()
-        {
-            IsRecording = false;
-            FramesRemaining = 0;
-            try { _entityWriter?.Flush(); } catch { }
-            try { _entityWriter?.Dispose(); } catch { }
-            _entityWriter = null;
-            try { _charWriter?.Flush(); } catch { }
-            try { _charWriter?.Dispose(); } catch { }
-            _charWriter = null;
         }
     }
 }

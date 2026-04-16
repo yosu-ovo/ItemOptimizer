@@ -167,7 +167,6 @@ namespace ItemOptimizerMod
                 writer.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Session started");
                 writer.WriteLine($"  Parallel workers: {OptimizerConfig.ParallelWorkerCount}");
                 writer.WriteLine($"  Mod hash: {OptimizerConfig.GetModSetHash()}");
-                writer.WriteLine($"  Scan status: {(ThreadSafetyAnalyzer.IsScanComplete ? $"v2 safe={ThreadSafetyAnalyzer.CountSafe} cond={ThreadSafetyAnalyzer.CountConditional} unsafe={ThreadSafetyAnalyzer.CountUnsafe}" : "no scan")}");
                 writer.WriteLine("════════════════════════════════════════════════════════");
             }
             catch { }

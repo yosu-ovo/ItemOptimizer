@@ -49,6 +49,12 @@ namespace ItemOptimizerMod
             // Always register; Prefix/Postfix check EnableLadderFix/EnablePlatformFix at runtime
             LadderFixPatch.Register(harmony);
 
+            // Interaction label optimization — cap ALT labels, runtime-guarded
+            InteractionLabelPatch.Register(harmony);
+
+            // Signal component source-level optimizations — runtime-guarded by individual config flags
+            SignalOptPatches.Register(harmony);
+
             // Register client-side sync tracking receiver
             SyncRelayReceiver.Register();
         }
@@ -63,6 +69,20 @@ namespace ItemOptimizerMod
             MetricRelayReceiver.Reset();
             SyncRelayReceiver.Reset();
             SyncTracker.Reset();
+        }
+
+        partial void RegisterProxyHandlers()
+        {
+            if (!OptimizerConfig.EnableProxySystem) return;
+            try
+            {
+                Proxy.ProxyRegistry.Register(new Identifier("proxy_light"), new Proxy.ProxyLightHandler());
+                LuaCsLogger.Log("[ItemOptimizer] Built-in ProxyLightHandler registered.");
+            }
+            catch (Exception e)
+            {
+                LuaCsLogger.LogError($"[ItemOptimizer] ProxyLightHandler registration failed: {e.Message}");
+            }
         }
 
         // ── Harmony Postfixes ──
