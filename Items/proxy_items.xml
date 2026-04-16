@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Items>
+  <!-- Proxy Light: a wall-mountable light whose behavior is fully controlled by the proxy engine.
+       LightComponent provides rendering only — its vanilla Update() is skipped.
+       powerconsumption="0" prevents voltage-based brightness changes in vanilla code paths. -->
+  <Item identifier="proxy_light" name="Proxy Light"
+        tags="proxy,smallitem,light" category="Misc"
+        description="A light controlled by the proxy engine. Demonstrates batch compute + sync architecture."
+        scale="0.5" impactsoundtag="impact_metal_light">
+
+    <Sprite texture="%ModDir%/Items/placeholder.png" depth="0.6"
+            sourcerect="0,0,32,32" origin="0.5,0.5" />
+    <InventoryIcon texture="%ModDir%/Items/placeholder.png"
+            sourcerect="0,0,32,32" origin="0.5,0.5" />
+
+    <Price baseprice="50" />
+
+    <LightComponent range="300" lightcolor="1.0,0.8,0.4,1.0"
+        powerconsumption="0" IsOn="true" castshadows="true"
+        allowingameediting="false" />
+
+    <Holdable selectkey="Select" pickkey="Select"
+        slots="Any" handle1="0,0"
+        msg="ItemMsgPickUp" canBePicked="true" />
+
+    <Body width="22" height="22" density="5" />
+  </Item>
+</Items>
