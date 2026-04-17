@@ -164,7 +164,6 @@ namespace ItemOptimizerMod
             {
                 DebugConsole.NewMessage($"[ItemOptimizer] ── Diagnostic ──", Color.Cyan);
                 DebugConsole.NewMessage($"  UpdateAllTakeover.Enabled: {UpdateAllTakeover.Enabled}", Color.White);
-                DebugConsole.NewMessage($"  OptimizerConfig.EnableParallelDispatch: {OptimizerConfig.EnableParallelDispatch}", Color.White);
                 DebugConsole.NewMessage($"  OptimizerConfig.EnableServerHashSetDedup: {OptimizerConfig.EnableServerHashSetDedup}", Color.White);
                 DebugConsole.NewMessage($"  ServerMetrics.HasServerData: {ServerMetrics.HasServerData}", Color.White);
                 DebugConsole.NewMessage($"  ServerMetrics.HasPerfData: {ServerMetrics.HasPerfData}", Color.White);

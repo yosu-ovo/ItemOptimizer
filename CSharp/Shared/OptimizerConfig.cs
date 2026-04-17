@@ -91,11 +91,6 @@ namespace ItemOptimizerMod
         // Signal graph accelerator (0=Off, 1=Accelerate, 2=Aggressive)
         public static int SignalGraphMode = 2;
 
-        // Parallel dispatch — REMOVED (experimental, incomplete)
-        // Fields kept for backward-compatible config loading only
-        public static bool EnableParallelDispatch = false;
-        public static int ParallelWorkerCount = 2;
-
         // Spike detector (off by default — adds ~1-2ms overhead when enabled)
         public static bool EnableSpikeDetector = false;
         public static float SpikeThresholdMs = 30f;
@@ -125,9 +120,6 @@ namespace ItemOptimizerMod
         public static readonly Dictionary<string, ModOptProfile> ModOptProfiles = new(StringComparer.Ordinal);
         // Runtime flat lookup: identifier → skipFrames (built from ModOptProfiles + prefab classification)
         public static volatile Dictionary<string, int> ModOptLookup = new(StringComparer.Ordinal);
-
-        // ── Thread safety manual overrides — REMOVED from UI but kept for backward compat loading ──
-        public static readonly Dictionary<string, int> ThreadSafetyOverrides = new(StringComparer.Ordinal);
 
         /// <summary>
         /// Classify an ItemPrefab into activity tier (0=Critical,1=Active,2=Moderate,3=Static)
@@ -240,8 +232,7 @@ namespace ItemOptimizerMod
 
         private static string GetProfileDir()
         {
-            var modDir = Path.GetDirectoryName(typeof(OptimizerConfig).Assembly.Location);
-            return Path.Combine(modDir ?? ".", "Optimizerlist");
+            return Path.Combine(ModPaths.ModDir, "Optimizerlist");
         }
 
         internal static string GetProfilePath()
@@ -249,10 +240,6 @@ namespace ItemOptimizerMod
             return Path.Combine(GetProfileDir(), $"profile_{GetModSetHash()}.xml");
         }
 
-        internal static string GetThreadSafetyCachePath()
-        {
-            return Path.Combine(GetProfileDir(), $"thread_safety_{GetModSetHash()}.xml");
-        }
 
         public static void SaveProfile()
         {
@@ -324,11 +311,7 @@ namespace ItemOptimizerMod
         private static string GetConfigPath()
         {
             if (_configPath != null) return _configPath;
-            var modDir = Path.GetDirectoryName(
-                typeof(OptimizerConfig).Assembly.Location);
-            if (string.IsNullOrEmpty(modDir))
-                modDir = "LocalMods/ItemOptimizer";
-            _configPath = Path.Combine(modDir, "ItemOptimizer_config.xml");
+            _configPath = ModPaths.Resolve("ItemOptimizer_config.xml");
             return _configPath;
         }
 
@@ -464,13 +447,6 @@ namespace ItemOptimizerMod
                 if (sga != null)
                     SignalGraphMode = ParseInt(sga.Attribute("mode")?.Value, 0, 0, 2);
 
-                var pd = root.Element("ParallelDispatch");
-                if (pd != null)
-                {
-                    EnableParallelDispatch = ParseBool(pd.Attribute("enabled")?.Value, false);
-                    ParallelWorkerCount = ParseInt(pd.Attribute("workers")?.Value, 2, 1, 6);
-                }
-
                 var proxy = root.Element("ProxySystem");
                 if (proxy != null)
                     EnableProxySystem = bool.TryParse(proxy.Attribute("enabled")?.Value, out var v) ? v : true;
@@ -590,9 +566,6 @@ namespace ItemOptimizerMod
                             new XAttribute("thresholdMs", SpikeThresholdMs)),
                         new XElement("SignalGraphAccel",
                             new XAttribute("mode", SignalGraphMode)),
-                        new XElement("ParallelDispatch",
-                            new XAttribute("enabled", EnableParallelDispatch),
-                            new XAttribute("workers", ParallelWorkerCount)),
                         new XElement("ProxySystem",
                             new XAttribute("enabled", EnableProxySystem)),
                         new XElement("InteractionLabel",

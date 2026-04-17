@@ -111,7 +111,6 @@ namespace ItemOptimizerMod
             if (OptimizerConfig.EnableCharacterStagger)
                 sb.Append("(groups=").Append(OptimizerConfig.CharacterStaggerGroups).Append(')');
             sb.Append(" SignalGraph=").Append(OptimizerConfig.SignalGraphMode);
-            sb.Append(" Parallel=").Append(B(OptimizerConfig.EnableParallelDispatch));
             sb.Append(" MiscParallel=").Append(B(OptimizerConfig.EnableMiscParallel));
             sb.AppendLine();
 

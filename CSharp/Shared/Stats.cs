@@ -4,7 +4,7 @@ namespace ItemOptimizerMod
 {
     static class Stats
     {
-        // Raw per-frame counters — non-atomic: approximate under parallel dispatch
+        // Raw per-frame counters
         internal static int ColdStorageSkips;
         internal static int GroundItemSkips;
         internal static int CustomInterfaceSkips;
@@ -25,10 +25,6 @@ namespace ItemOptimizerMod
         internal static int CharStaggerSkipped;
         internal static int LadderFixCorrections;
         internal static int PlatformFixCorrections;
-
-        // ── Parallel dispatch counters ──
-        internal static int ParallelItems;
-        internal static int MainThreadItems;
 
         // ── Proxy dispatch counters ──
         internal static int ProxyItems;
@@ -83,11 +79,6 @@ namespace ItemOptimizerMod
         internal static float AvgLadderFixCorrections;
         internal static float AvgPlatformFixCorrections;
 
-        // ── Parallel dispatch averages ──
-        internal static float AvgParallelItems;
-        internal static float AvgMainThreadItems;
-        internal static float AvgParallelWallMs;
-
         // ── Proxy dispatch averages ──
         internal static float AvgProxyItems;
         internal static float AvgProxyBatchComputeMs;
@@ -100,15 +91,6 @@ namespace ItemOptimizerMod
 
         // ── Total dispatch average ──
         internal static float AvgTotalDispatchMs;
-
-        // ── Per-thread live data (updated each frame, up to 8 threads) ──
-        internal static readonly float[] ThreadMs = new float[8];     // index 0=main, 1-7=workers
-        internal static readonly int[] ThreadItems = new int[8];
-        internal static readonly float[] AvgThreadMs = new float[8];
-        internal static readonly int[] AvgThreadItems = new int[8];
-        internal static int ActiveThreadCount;
-        // Smoothed display thread count — prevents bar flickering
-        internal static int DisplayThreadCount;
 
         private const float Smoothing = 0.05f;
         private static readonly double TicksToMs = 1000.0 / Stopwatch.Frequency;
@@ -135,10 +117,6 @@ namespace ItemOptimizerMod
             AvgLadderFixCorrections = AvgLadderFixCorrections * (1f - Smoothing) + LadderFixCorrections * Smoothing;
             AvgPlatformFixCorrections = AvgPlatformFixCorrections * (1f - Smoothing) + PlatformFixCorrections * Smoothing;
 
-            // Parallel dispatch EMA
-            AvgParallelItems = AvgParallelItems * (1f - Smoothing) + ParallelItems * Smoothing;
-            AvgMainThreadItems = AvgMainThreadItems * (1f - Smoothing) + MainThreadItems * Smoothing;
-
             // Proxy dispatch EMA
             AvgProxyItems = AvgProxyItems * (1f - Smoothing) + ProxyItems * Smoothing;
             AvgProxyBatchComputeMs = AvgProxyBatchComputeMs * (1f - Smoothing) + ProxyBatchComputeMs * Smoothing;
@@ -159,12 +137,6 @@ namespace ItemOptimizerMod
             AvgPhaseBClassifyMs = AvgPhaseBClassifyMs * (1f - Smoothing) + PhaseBClassifyMs * Smoothing;
             AvgPhaseBPreBuildMs = AvgPhaseBPreBuildMs * (1f - Smoothing) + PhaseBPreBuildMs * Smoothing;
             AvgPhaseBMainLoopMs = AvgPhaseBMainLoopMs * (1f - Smoothing) + PhaseBMainLoopMs * Smoothing;
-
-            for (int i = 0; i < 8; i++)
-            {
-                AvgThreadMs[i] = AvgThreadMs[i] * (1f - Smoothing) + ThreadMs[i] * Smoothing;
-                AvgThreadItems[i] = (int)(AvgThreadItems[i] * (1f - Smoothing) + ThreadItems[i] * Smoothing);
-            }
 
             // Invalidate per-frame caches
             Patches.HasStatusTagCachePatch.OnNewFrame();
@@ -189,8 +161,6 @@ namespace ItemOptimizerMod
             CharStaggerSkipped = 0;
             LadderFixCorrections = 0;
             PlatformFixCorrections = 0;
-            ParallelItems = 0;
-            MainThreadItems = 0;
             ProxyItems = 0;
             ProxyBatchComputeMs = 0;
             ProxySyncBackMs = 0;
@@ -206,42 +176,6 @@ namespace ItemOptimizerMod
             PhaseBClassifyMs = 0;
             PhaseBPreBuildMs = 0;
             PhaseBMainLoopMs = 0;
-        }
-
-        /// <summary>
-        /// Called from UpdateAllTakeover.DispatchItemUpdates to record per-thread timing.
-        /// Uses fixed-size worker arrays (no ConcurrentDictionary, stable thread count).
-        /// </summary>
-        internal static void RecordParallelFrame(
-            int workerCount, long[] workerTicks, int[] workerItemCounts,
-            long mainThreadTicks, int mainThreadItemCount)
-        {
-            // Slot 0 = main thread
-            ThreadMs[0] = (float)(mainThreadTicks * TicksToMs);
-            ThreadItems[0] = mainThreadItemCount;
-
-            // Slots 1..workerCount = worker threads (fixed, stable)
-            float maxWorkerMs = 0;
-            for (int i = 0; i < workerCount && i < 7; i++)
-            {
-                float ms = (float)(workerTicks[i] * TicksToMs);
-                ThreadMs[i + 1] = ms;
-                ThreadItems[i + 1] = workerItemCounts[i];
-                if (ms > maxWorkerMs) maxWorkerMs = ms;
-            }
-
-            int totalSlots = 1 + workerCount;
-            ActiveThreadCount = totalSlots;
-            DisplayThreadCount = totalSlots; // fixed count, no flickering
-
-            // Clear unused slots
-            for (int i = totalSlots; i < 8; i++)
-            {
-                ThreadMs[i] = 0;
-                ThreadItems[i] = 0;
-            }
-
-            AvgParallelWallMs = AvgParallelWallMs * (1f - Smoothing) + maxWorkerMs * Smoothing;
         }
 
         internal static float EstimatedSavedMs()
@@ -264,12 +198,6 @@ namespace ItemOptimizerMod
                  + AvgCharStaggerSkipped * 0.01f;
         }
 
-        /// <summary>Estimated ms saved by parallel dispatch (workers run concurrent with main).</summary>
-        internal static float ParallelSavedMs()
-        {
-            return AvgParallelWallMs;
-        }
-
         internal static void Reset()
         {
             ColdStorageSkips = 0;
@@ -288,8 +216,6 @@ namespace ItemOptimizerMod
             AnimLODSkipped = 0;
             AnimLODHalfRate = 0;
             CharStaggerSkipped = 0;
-            ParallelItems = 0;
-            MainThreadItems = 0;
             ProxyItems = 0;
             ProxyBatchComputeMs = 0;
             ProxySyncBackMs = 0;
@@ -313,9 +239,6 @@ namespace ItemOptimizerMod
             AvgLadderFixCorrections = 0;
             PlatformFixCorrections = 0;
             AvgPlatformFixCorrections = 0;
-            AvgParallelItems = 0;
-            AvgMainThreadItems = 0;
-            AvgParallelWallMs = 0;
             AvgProxyItems = 0;
             AvgProxyBatchComputeMs = 0;
             AvgProxySyncBackMs = 0;
@@ -331,15 +254,6 @@ namespace ItemOptimizerMod
             AvgPhaseBClassifyMs = 0;
             AvgPhaseBPreBuildMs = 0;
             AvgPhaseBMainLoopMs = 0;
-            ActiveThreadCount = 0;
-            DisplayThreadCount = 0;
-            for (int i = 0; i < 8; i++)
-            {
-                ThreadMs[i] = 0;
-                ThreadItems[i] = 0;
-                AvgThreadMs[i] = 0;
-                AvgThreadItems[i] = 0;
-            }
         }
     }
 }
