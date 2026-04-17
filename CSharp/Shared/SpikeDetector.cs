@@ -51,8 +51,7 @@ namespace ItemOptimizerMod
             _itemPostfix = new HarmonyMethod(typeof(SpikeDetector), nameof(ItemPostfix));
             _cooldownTicks = Stopwatch.Frequency * 5; // 5 second cooldown
 
-            var modDir = Path.GetDirectoryName(typeof(SpikeDetector).Assembly.Location);
-            _logPath = Path.Combine(modDir ?? ".", "spike_log.csv");
+            _logPath = ModPaths.ResolveData("spike_log.csv");
         }
 
         internal static void SetEnabled(bool enabled)

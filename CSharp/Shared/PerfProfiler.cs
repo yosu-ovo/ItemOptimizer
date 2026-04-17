@@ -127,16 +127,9 @@ namespace ItemOptimizerMod
                 else
                     FrameData[id] = (elapsed, 1);
 
-                // Track parallel lane (only set once per identifier per frame)
+                // Track lane
                 if (!FrameLane.ContainsKey(id))
-                {
-                    if (Patches.UpdateAllTakeover.DispatchActive && Patches.UpdateAllTakeover.IsWorkerThread)
-                        FrameLane[id] = "worker";
-                    else if (Patches.UpdateAllTakeover.DispatchActive)
-                        FrameLane[id] = "main";
-                    else
-                        FrameLane[id] = "-";
-                }
+                    FrameLane[id] = "-";
             }
         }
 
@@ -201,26 +194,6 @@ namespace ItemOptimizerMod
                 _csvBuffer.Append(ms.ToString("F4")).Append(',');
                 _csvBuffer.Append(kvp.Value.count).Append(',');
                 _csvBuffer.AppendLine(lane ?? "-");
-            }
-
-            // Append per-frame parallel summary row
-            if (Patches.UpdateAllTakeover.Enabled && OptimizerConfig.EnableParallelDispatch)
-            {
-                int mainItems = Stats.MainThreadItems;
-                int parallelItems = Stats.ParallelItems;
-                int threadCount = Stats.ActiveThreadCount;
-                float mainMs = Stats.ThreadMs[0];
-                float maxWorkerMs = 0;
-                for (int i = 1; i < threadCount; i++)
-                    if (Stats.ThreadMs[i] > maxWorkerMs) maxWorkerMs = Stats.ThreadMs[i];
-
-                _csvBuffer.Append(frame).Append(',');
-                _csvBuffer.Append("__parallel_summary__,");
-                _csvBuffer.Append("-,");
-                _csvBuffer.Append(mainMs.ToString("F4")).Append(',');
-                _csvBuffer.Append(mainItems).Append(',');
-                _csvBuffer.Append($"threads={threadCount} parallel={parallelItems} workerMs={maxWorkerMs:F4}");
-                _csvBuffer.AppendLine();
             }
         }
 
@@ -416,9 +389,7 @@ namespace ItemOptimizerMod
         internal static string ResolvePath(string path)
         {
             if (Path.IsPathRooted(path)) return path;
-            string dir = Path.Combine(AppContext.BaseDirectory, "ItemOptimizer");
-            Directory.CreateDirectory(dir);
-            return Path.Combine(dir, path);
+            return ModPaths.ResolveData(path);
         }
 
         private static string JsonEscape(string s)

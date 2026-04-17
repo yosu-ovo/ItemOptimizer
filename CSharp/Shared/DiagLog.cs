@@ -4,7 +4,7 @@ using System.IO;
 namespace ItemOptimizerMod
 {
     /// <summary>
-    /// Writes diagnostic lines to LocalMods/ItemOptimizer/diag.log.
+    /// Writes diagnostic lines to {ModDir}/diag.log.
     /// Thread-safe via lock. Auto-creates file, appends with timestamps.
     /// </summary>
     static class DiagLog
@@ -15,9 +15,7 @@ namespace ItemOptimizerMod
         private static string GetPath()
         {
             if (_path != null) return _path;
-            // LuaCs mods compile from source at runtime — Assembly.Location may not be the mod dir.
-            // Use the game's working directory + known mod path instead.
-            _path = Path.Combine("LocalMods", "ItemOptimizer", "diag.log");
+            _path = ModPaths.ResolveData("diag.log");
             return _path;
         }
 
