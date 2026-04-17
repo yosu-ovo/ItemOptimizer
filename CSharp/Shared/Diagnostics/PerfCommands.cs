@@ -930,7 +930,7 @@ namespace ItemOptimizerMod
                     DebugConsole.NewMessage($"[ItemOptimizer] No graph node for Item#{targetId}.", Color.Red);
             });
 
-            Add("ionative", "ionative [on|off]: Toggle NativeRuntime for motion sensors mid-round.", args =>
+            Add("ionative", "ionative [on|off]: Control NativeRuntime. No args = show status.", args =>
             {
                 if (args.Length > 0)
                 {
@@ -948,23 +948,41 @@ namespace ItemOptimizerMod
                         OptimizerConfig.EnableNativeRuntime = false;
                     }
                 }
-                else
-                {
-                    // Toggle
-                    if (World.NativeRuntimeBridge.IsEnabled)
-                    {
-                        World.NativeRuntimeBridge.OnRoundEnd();
-                        OptimizerConfig.EnableNativeRuntime = false;
-                    }
-                    else
-                    {
-                        OptimizerConfig.EnableNativeRuntime = true;
-                        World.NativeRuntimeBridge.OnRoundStart();
-                    }
-                }
                 DebugConsole.NewMessage(
                     $"[ItemOptimizer] NativeRuntime: {(World.NativeRuntimeBridge.IsEnabled ? "ON" : "OFF")}",
                     World.NativeRuntimeBridge.IsEnabled ? Color.LimeGreen : Color.Yellow);
+                if (World.NativeRuntimeBridge.IsEnabled)
+                {
+                    if (World.NativeRuntimeBridge.LastStartupInfo != null)
+                        DebugConsole.NewMessage(
+                            $"[ItemOptimizer]   {World.NativeRuntimeBridge.LastStartupInfo}", Color.White);
+                    // Show current zone tiers with distance to nearest player
+                    var rt = World.NativeRuntimeBridge.Runtime;
+                    if (rt != null)
+                    {
+                        // Find nearest player position for distance calc
+                        Vector2 playerPos = Character.Controlled?.WorldPosition
+                            ?? GameMain.GameScreen?.Cam?.GetPosition()
+                            ?? Vector2.Zero;
+
+                        foreach (var zone in rt.Graph.Zones)
+                        {
+                            string name = zone is World.SubmarineZone szz
+                                ? (szz.Submarine?.Info?.Name ?? $"Zone{szz.Id}")
+                                : $"Zone{zone.Id}";
+                            float dist = Vector2.Distance(playerPos, zone.Position);
+                            bool playerAboard = zone is World.SubmarineZone sz2
+                                && Character.Controlled?.Submarine == sz2.Submarine;
+                            string aboardTag = playerAboard ? " [YOU]" : "";
+                            var tierColor = zone.Tier <= World.ZoneTier.Nearby ? Color.LimeGreen
+                                : zone.Tier == World.ZoneTier.Passive ? Color.Yellow
+                                : Color.Gray;
+                            DebugConsole.NewMessage(
+                                $"[ItemOptimizer]   {name}: tier={zone.Tier}, dist={dist:F0}, components={zone.Components.Count}{aboardTag}",
+                                tierColor);
+                        }
+                    }
+                }
             });
 
             Add("iospatial", "iospatial: Dump hull spatial partition state for motion sensors + character positions.", args =>

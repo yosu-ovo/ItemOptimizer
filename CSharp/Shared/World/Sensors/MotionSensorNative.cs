@@ -27,9 +27,10 @@ namespace ItemOptimizerMod.World.Sensors
         }
 
         /// <summary>
-        /// Sensors must tick every frame for signal continuity.
+        /// Active/Nearby/Passive: every frame (signal continuity — skipping causes doors to flicker).
+        /// Dormant: skip (runtime already skips dormant zones, this is a safety net).
         /// </summary>
-        public override bool ShouldTick(ZoneTier tier, uint frame) => true;
+        public override bool ShouldTick(ZoneTier tier, uint frame) => tier < ZoneTier.Dormant;
 
         public override void Tick(ref TickContext ctx)
         {
