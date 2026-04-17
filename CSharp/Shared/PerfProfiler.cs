@@ -36,6 +36,9 @@ namespace ItemOptimizerMod
         // Lazy cache: identifier → package name
         private static readonly Dictionary<string, string> IdToPackage = new(512);
 
+        // Lazy cache: identifier → semantic lane (sensor/logic/power/door/pump/wearable/other)
+        private static readonly Dictionary<string, string> IdToLane = new(512);
+
         // Record buffer
         private static StringBuilder _csvBuffer;
 
@@ -127,9 +130,9 @@ namespace ItemOptimizerMod
                 else
                     FrameData[id] = (elapsed, 1);
 
-                // Track lane
+                // Track lane (semantic classification by component type)
                 if (!FrameLane.ContainsKey(id))
-                    FrameLane[id] = "-";
+                    FrameLane[id] = ClassifyLane(__instance);
             }
         }
 
@@ -376,6 +379,72 @@ namespace ItemOptimizerMod
             return "Unknown";
         }
 
+        private static string ClassifyLane(Item item)
+        {
+            string id = item.Prefab?.Identifier.Value ?? "unknown";
+            if (IdToLane.TryGetValue(id, out var cached)) return cached;
+
+            string lane = "other";
+            foreach (var comp in item.Components)
+            {
+                string typeName = comp.GetType().Name;
+                switch (typeName)
+                {
+                    case "MotionSensor":
+                    case "WaterDetector":
+                    case "OxygenDetector":
+                        lane = "sensor"; goto done;
+                    case "RelayComponent":
+                    case "SignalCheckComponent":
+                    case "AdderComponent":
+                    case "MultiplyComponent":
+                    case "DivideComponent":
+                    case "SubtractComponent":
+                    case "NotComponent":
+                    case "AndComponent":
+                    case "OrComponent":
+                    case "XorComponent":
+                    case "EqualsComponent":
+                    case "GreaterComponent":
+                    case "MemoryComponent":
+                    case "OscillatorComponent":
+                    case "DelayComponent":
+                    case "ConcatComponent":
+                    case "RegExFindComponent":
+                    case "StringComponent":
+                    case "ColorComponent":
+                    case "TrigonometricFunctionComponent":
+                    case "ModuloComponent":
+                    case "AbsComponent":
+                    case "SquareRootComponent":
+                    case "RoundComponent":
+                    case "CeilingComponent":
+                    case "FloorComponent":
+                    case "WiFiComponent":
+                    case "Terminal":
+                    case "CustomInterface":
+                        lane = "logic"; goto done;
+                    case "PowerTransfer":
+                    case "PowerContainer":
+                    case "Reactor":
+                    case "PoweredController":
+                        lane = "power"; goto done;
+                    case "Door":
+                        lane = "door"; goto done;
+                    case "Pump":
+                        lane = "pump"; goto done;
+                    case "Wearable":
+                        if (lane != "other") break; // don't override a more specific classification
+                        lane = "wearable"; break;
+                    case "Wire":
+                        if (lane == "other") lane = "wire"; break;
+                }
+            }
+            done:
+            IdToLane[id] = lane;
+            return lane;
+        }
+
         private static HashSet<string> GetKnownComponentNames()
         {
             if (_knownComponentNames != null) return _knownComponentNames;
@@ -427,6 +496,7 @@ namespace ItemOptimizerMod
             FrameData.Clear();
             FrameLane.Clear();
             IdToPackage.Clear();
+            IdToLane.Clear();
             _csvBuffer = null;
             TargetFilter = null;
         }
