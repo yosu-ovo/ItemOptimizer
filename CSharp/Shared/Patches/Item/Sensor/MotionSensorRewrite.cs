@@ -47,6 +47,9 @@ namespace ItemOptimizerMod.Patches
         // ── Frame counter for throttle (flat array, no CWT) ──
         private static readonly int[] FrameCounters = new int[65536];
 
+        // ── NativeRuntime bypass: sensors managed by NativeRuntime skip Prefix entirely ──
+        internal static readonly bool[] IsNativeManaged = new bool[65536];
+
         // ── Spatial cache per sensor: which hulls does this sensor's broadRange cover? ──
         private struct SensorSpatialCache
         {
@@ -93,10 +96,11 @@ namespace ItemOptimizerMod.Patches
             Array.Clear(CachedStateOut, 0, CachedStateOut.Length);
             Array.Clear(FrameCounters, 0, FrameCounters.Length);
             Array.Clear(_spatialCache, 0, _spatialCache.Length);
+            Array.Clear(IsNativeManaged, 0, IsNativeManaged.Length);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Connection GetStateOutConnection(MotionSensor ms)
+        internal static Connection GetStateOutConnection(MotionSensor ms)
         {
             int id = ms.item.ID;
             var conn = CachedStateOut[id];
@@ -324,6 +328,9 @@ namespace ItemOptimizerMod.Patches
         /// </summary>
         public static bool Prefix(MotionSensor __instance, float deltaTime)
         {
+            // NativeRuntime bypass — when managed by NativeRuntime, skip Prefix entirely
+            if (IsNativeManaged[__instance.item.ID]) return false;
+
             if (!OptimizerConfig.EnableMotionSensorRewrite)
             {
                 if (TraceFrames > 0 && (TraceTargetId < 0 || TraceTargetId == __instance.item.ID))
@@ -783,6 +790,242 @@ namespace ItemOptimizerMod.Patches
             }
 
             return false;
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  NativeRuntime entry point — ONLY called by MotionSensorNative.
+        //  This is a SEPARATE codepath from Prefix. Prefix is untouched.
+        //  Duplicates sections 2+3 of Prefix (timer gate + full scan).
+        //  Does NOT send signals or apply status effects — the caller
+        //  handles those via TickContext command emission.
+        // ════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Run detection logic for a sensor managed by NativeRuntime.
+        /// Updates sensor.MotionDetected, updateTimer, and FrameCounters.
+        /// Does NOT send signals or apply status effects.
+        /// </summary>
+        internal static void RunDetection(MotionSensor sensor, float deltaTime)
+        {
+            var item = sensor.item;
+            int id = item.ID;
+
+            // ── Timer gate (same logic as Prefix section 2) ──
+            ref float updateTimer = ref Ref_updateTimer(sensor);
+            updateTimer -= deltaTime;
+
+            if (updateTimer > 0.0f)
+            {
+                FrameCounters[id]++;
+                if (FrameCounters[id] % OptimizerConfig.MotionSensorSkipFrames != 0)
+                {
+                    Stats.MotionSensorSkips++;
+                    return;
+                }
+
+                if (QuickDetect(sensor))
+                    sensor.MotionDetected = true;
+                Stats.MotionSensorSkips++;
+                return;
+            }
+
+            // ── Full scan (same logic as Prefix section 3) ──
+            sensor.MotionDetected = false;
+            updateTimer = sensor.UpdateInterval;
+            FrameCounters[id] = 0;
+
+            // 3a. Own motion
+            if (item.body != null && item.body.Enabled && sensor.DetectOwnMotion)
+            {
+                if (Math.Abs(item.body.LinearVelocity.X) > sensor.MinimumVelocity ||
+                    Math.Abs(item.body.LinearVelocity.Y) > sensor.MinimumVelocity)
+                {
+                    sensor.MotionDetected = true;
+                    return;
+                }
+            }
+
+            float rangeX = Ref_rangeX(sensor);
+            float rangeY = Ref_rangeY(sensor);
+            Vector2 detectPos = item.WorldPosition + sensor.TransformedDetectOffset;
+            Rectangle detectRect = new Rectangle(
+                (int)(detectPos.X - rangeX), (int)(detectPos.Y - rangeY),
+                (int)(rangeX * 2), (int)(rangeY * 2));
+            float broadRangeX = Math.Max(rangeX * 2, 500);
+            float broadRangeY = Math.Max(rangeY * 2, 500);
+
+            // 3b. Wall detection
+            if (item.CurrentHull == null && item.Submarine != null &&
+                sensor.Target.HasFlag(MotionSensor.TargetType.Wall))
+            {
+                if (Level.Loaded != null &&
+                    (Math.Abs(item.Submarine.Velocity.X) > sensor.MinimumVelocity ||
+                     Math.Abs(item.Submarine.Velocity.Y) > sensor.MinimumVelocity))
+                {
+                    var cells = Level.Loaded.GetCells(item.WorldPosition, 1);
+                    foreach (var cell in cells)
+                    {
+                        if (cell.IsPointInside(item.WorldPosition))
+                        {
+                            sensor.MotionDetected = true;
+                            return;
+                        }
+                        foreach (var edge in cell.Edges)
+                        {
+                            Vector2 e1 = edge.Point1 + cell.Translation;
+                            Vector2 e2 = edge.Point2 + cell.Translation;
+                            if (MathUtils.LineSegmentsIntersect(e1, e2,
+                                    new Vector2(detectRect.X, detectRect.Y),
+                                    new Vector2(detectRect.Right, detectRect.Y)) ||
+                                MathUtils.LineSegmentsIntersect(e1, e2,
+                                    new Vector2(detectRect.X, detectRect.Bottom),
+                                    new Vector2(detectRect.Right, detectRect.Bottom)) ||
+                                MathUtils.LineSegmentsIntersect(e1, e2,
+                                    new Vector2(detectRect.X, detectRect.Y),
+                                    new Vector2(detectRect.X, detectRect.Bottom)) ||
+                                MathUtils.LineSegmentsIntersect(e1, e2,
+                                    new Vector2(detectRect.Right, detectRect.Y),
+                                    new Vector2(detectRect.Right, detectRect.Bottom)))
+                            {
+                                sensor.MotionDetected = true;
+                                return;
+                            }
+                        }
+                    }
+                }
+                foreach (Submarine sub in Submarine.Loaded)
+                {
+                    if (sub == item.Submarine) continue;
+                    Vector2 relativeVelocity = item.Submarine.Velocity - sub.Velocity;
+                    if (Math.Abs(relativeVelocity.X) < sensor.MinimumVelocity &&
+                        Math.Abs(relativeVelocity.Y) < sensor.MinimumVelocity)
+                        continue;
+                    Rectangle worldBorders = new Rectangle(
+                        sub.Borders.X + (int)sub.WorldPosition.X,
+                        sub.Borders.Y + (int)sub.WorldPosition.Y - sub.Borders.Height,
+                        sub.Borders.Width,
+                        sub.Borders.Height);
+                    if (worldBorders.Intersects(detectRect))
+                    {
+                        foreach (Structure wall in Structure.WallList)
+                        {
+                            if (wall.Submarine == sub && wall.WorldRect.Intersects(detectRect))
+                            {
+                                sensor.MotionDetected = true;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3c. Character detection
+            bool trigHumans = Ref_triggerFromHumans(sensor);
+            bool trigPets = Ref_triggerFromPets(sensor);
+            bool trigMonsters = Ref_triggerFromMonsters(sensor);
+            if (!(trigHumans || trigPets || trigMonsters)) return;
+
+            var targetChars = Ref_targetCharacters(sensor);
+            float minVelSq = sensor.MinimumVelocity * sensor.MinimumVelocity;
+
+            if (OptimizerConfig.EnableHullSpatialIndex)
+            {
+                ref var sc = ref _spatialCache[id];
+                if (!sc.Resolved)
+                    ResolveSpatialCache(ref sc, sensor);
+
+                var coveredIds = sc.CoveredHullIds;
+                for (int i = 0; i < coveredIds.Length; i++)
+                {
+                    var candidates = HullCharacterTracker.GetCharactersInHull(coveredIds[i]);
+                    if (candidates.Count > 0 && CheckCandidates(candidates, sensor,
+                        detectPos, broadRangeX, broadRangeY, detectRect, minVelSq,
+                        trigHumans, trigPets, trigMonsters, targetChars))
+                    {
+                        sensor.MotionDetected = true;
+                        return;
+                    }
+                }
+
+                var charList = Character.CharacterList;
+                for (int i = 0; i < charList.Count; i++)
+                {
+                    Character character = charList[i];
+                    Hull cHull = character.CurrentHull;
+                    if (cHull != null && cHull.Submarine == sc.SensorSub) continue;
+                    if (Math.Abs(character.WorldPosition.X - detectPos.X) > broadRangeX ||
+                        Math.Abs(character.WorldPosition.Y - detectPos.Y) > broadRangeY)
+                        continue;
+                    if (character.Removed) continue;
+                    if (character.SpawnTime > Timing.TotalTime - 1.0) continue;
+                    if (sensor.IgnoreDead && character.IsDead) continue;
+                    if (character.IsPet) { if (!trigPets) continue; }
+                    else if (character.IsHuman || CharacterParams.CompareGroup(
+                        character.Group, CharacterPrefab.HumanGroup))
+                    { if (!trigHumans) continue; }
+                    else { if (!trigMonsters) continue; }
+                    if (targetChars.Count > 0)
+                    {
+                        bool matchFound = false;
+                        foreach (Identifier target in targetChars)
+                        {
+                            if (character.MatchesSpeciesNameOrGroup(target) ||
+                                character.Params.HasTag(target))
+                            { matchFound = true; break; }
+                        }
+                        if (!matchFound) continue;
+                    }
+                    foreach (Limb limb in character.AnimController.Limbs)
+                    {
+                        if (limb.IsSevered) continue;
+                        if (limb.LinearVelocity.LengthSquared() < minVelSq) continue;
+                        if (MathUtils.CircleIntersectsRectangle(limb.WorldPosition,
+                            ConvertUnits.ToDisplayUnits(limb.body.GetMaxExtent()), detectRect))
+                        {
+                            sensor.MotionDetected = true;
+                            return;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                foreach (Character character in Character.CharacterList)
+                {
+                    if (Math.Abs(character.WorldPosition.X - detectPos.X) > broadRangeX ||
+                        Math.Abs(character.WorldPosition.Y - detectPos.Y) > broadRangeY)
+                        continue;
+                    if (character.SpawnTime > Timing.TotalTime - 1.0) continue;
+                    if (sensor.IgnoreDead && character.IsDead) continue;
+                    if (character.IsPet) { if (!trigPets) continue; }
+                    else if (character.IsHuman || CharacterParams.CompareGroup(
+                        character.Group, CharacterPrefab.HumanGroup))
+                    { if (!trigHumans) continue; }
+                    else { if (!trigMonsters) continue; }
+                    if (targetChars.Count > 0)
+                    {
+                        bool matchFound = false;
+                        foreach (Identifier target in targetChars)
+                        {
+                            if (character.MatchesSpeciesNameOrGroup(target) ||
+                                character.Params.HasTag(target))
+                            { matchFound = true; break; }
+                        }
+                        if (!matchFound) continue;
+                    }
+                    foreach (Limb limb in character.AnimController.Limbs)
+                    {
+                        if (limb.IsSevered) continue;
+                        if (limb.LinearVelocity.LengthSquared() < minVelSq) continue;
+                        if (MathUtils.CircleIntersectsRectangle(limb.WorldPosition,
+                            ConvertUnits.ToDisplayUnits(limb.body.GetMaxExtent()), detectRect))
+                        {
+                            sensor.MotionDetected = true;
+                            return;
+                        }
+                    }
+                }
+            }
         }
     }
 }

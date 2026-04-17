@@ -296,6 +296,10 @@ namespace ItemOptimizerMod.Patches
                 if (isMapFrame)
                     HullCharacterTracker.Rebuild();
 
+                // NativeRuntime: tick registered NativeComponents (sensors etc.)
+                if (isMapFrame && World.NativeRuntimeBridge.IsEnabled)
+                    World.NativeRuntimeBridge.Tick(scaledDt, cam);
+
                 if (isMapFrame)
                     DispatchItemUpdates(scaledDt, cam);
 

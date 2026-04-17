@@ -135,7 +135,8 @@ namespace ItemOptimizerMod
                 $"WaterDetRewrite={OptimizerConfig.EnableWaterDetectorRewrite}, " +
                 $"RelayRewrite={OptimizerConfig.EnableRelayRewrite}, " +
                 $"PowerTransferRewrite={OptimizerConfig.EnablePowerTransferRewrite}, " +
-                $"PowerContainerRewrite={OptimizerConfig.EnablePowerContainerRewrite}");
+                $"PowerContainerRewrite={OptimizerConfig.EnablePowerContainerRewrite}, " +
+                $"NativeRuntime={OptimizerConfig.EnableNativeRuntime}");
             }
             catch (Exception e)
             {
@@ -166,12 +167,15 @@ namespace ItemOptimizerMod
             {
                 SignalGraphEvaluator.Compile();
             }
+
+            World.NativeRuntimeBridge.OnRoundStart();
         }
 
         public void Dispose()
         {
             DisposeClient();
             DisposeServer();
+            World.NativeRuntimeBridge.OnRoundEnd();
             PerfCommands.Unregister();
             PerfProfiler.Reset();
             SpikeDetector.Reset();
@@ -412,6 +416,19 @@ namespace ItemOptimizerMod
                     else
                     {
                         PowerContainerRewrite.Unregister(harmony);
+                    }
+                    break;
+                case "native_runtime":
+                    OptimizerConfig.EnableNativeRuntime = value > 0;
+                    if (value > 0)
+                    {
+                        if (!World.NativeRuntimeBridge.IsEnabled)
+                            World.NativeRuntimeBridge.OnRoundStart();
+                    }
+                    else
+                    {
+                        if (World.NativeRuntimeBridge.IsEnabled)
+                            World.NativeRuntimeBridge.OnRoundEnd();
                     }
                     break;
             }

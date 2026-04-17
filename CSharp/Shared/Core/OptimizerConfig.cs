@@ -91,6 +91,9 @@ namespace ItemOptimizerMod
         // Signal graph accelerator (0=Off, 1=Accelerate, 2=Aggressive)
         public static int SignalGraphMode = 2;
 
+        // NativeComponent runtime (experimental — default off)
+        public static bool EnableNativeRuntime = false;
+
         // Spike detector (off by default — adds ~1-2ms overhead when enabled)
         public static bool EnableSpikeDetector = false;
         public static float SpikeThresholdMs = 30f;
@@ -447,6 +450,10 @@ namespace ItemOptimizerMod
                 if (sga != null)
                     SignalGraphMode = ParseInt(sga.Attribute("mode")?.Value, 0, 0, 2);
 
+                var nrt = root.Element("NativeRuntime");
+                if (nrt != null)
+                    EnableNativeRuntime = ParseBool(nrt.Attribute("enabled")?.Value, false);
+
                 var proxy = root.Element("ProxySystem");
                 if (proxy != null)
                     EnableProxySystem = bool.TryParse(proxy.Attribute("enabled")?.Value, out var v) ? v : true;
@@ -566,6 +573,8 @@ namespace ItemOptimizerMod
                             new XAttribute("thresholdMs", SpikeThresholdMs)),
                         new XElement("SignalGraphAccel",
                             new XAttribute("mode", SignalGraphMode)),
+                        new XElement("NativeRuntime",
+                            new XAttribute("enabled", EnableNativeRuntime)),
                         new XElement("ProxySystem",
                             new XAttribute("enabled", EnableProxySystem)),
                         new XElement("InteractionLabel",

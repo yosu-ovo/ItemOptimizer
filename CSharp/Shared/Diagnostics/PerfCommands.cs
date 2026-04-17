@@ -930,6 +930,43 @@ namespace ItemOptimizerMod
                     DebugConsole.NewMessage($"[ItemOptimizer] No graph node for Item#{targetId}.", Color.Red);
             });
 
+            Add("ionative", "ionative [on|off]: Toggle NativeRuntime for motion sensors mid-round.", args =>
+            {
+                if (args.Length > 0)
+                {
+                    string a = args[0].ToLowerInvariant();
+                    if (a == "on" || a == "1")
+                    {
+                        OptimizerConfig.EnableNativeRuntime = true;
+                        if (!World.NativeRuntimeBridge.IsEnabled)
+                            World.NativeRuntimeBridge.OnRoundStart();
+                    }
+                    else if (a == "off" || a == "0")
+                    {
+                        if (World.NativeRuntimeBridge.IsEnabled)
+                            World.NativeRuntimeBridge.OnRoundEnd();
+                        OptimizerConfig.EnableNativeRuntime = false;
+                    }
+                }
+                else
+                {
+                    // Toggle
+                    if (World.NativeRuntimeBridge.IsEnabled)
+                    {
+                        World.NativeRuntimeBridge.OnRoundEnd();
+                        OptimizerConfig.EnableNativeRuntime = false;
+                    }
+                    else
+                    {
+                        OptimizerConfig.EnableNativeRuntime = true;
+                        World.NativeRuntimeBridge.OnRoundStart();
+                    }
+                }
+                DebugConsole.NewMessage(
+                    $"[ItemOptimizer] NativeRuntime: {(World.NativeRuntimeBridge.IsEnabled ? "ON" : "OFF")}",
+                    World.NativeRuntimeBridge.IsEnabled ? Color.LimeGreen : Color.Yellow);
+            });
+
             Add("iospatial", "iospatial: Dump hull spatial partition state for motion sensors + character positions.", args =>
             {
                 DebugConsole.NewMessage($"[ItemOptimizer] ── Hull Spatial Partition Debug ──", Color.Cyan);
