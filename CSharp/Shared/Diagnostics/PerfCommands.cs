@@ -930,7 +930,7 @@ namespace ItemOptimizerMod
                     DebugConsole.NewMessage($"[ItemOptimizer] No graph node for Item#{targetId}.", Color.Red);
             });
 
-            Add("ionative", "ionative [on|off]: Control NativeRuntime. No args = show status.", args =>
+            Add("ionative", "ionative [on|off|parallel|direct]: Control NativeRuntime. No args = show status.", args =>
             {
                 if (args.Length > 0)
                 {
@@ -947,17 +947,44 @@ namespace ItemOptimizerMod
                             World.NativeRuntimeBridge.OnRoundEnd();
                         OptimizerConfig.EnableNativeRuntime = false;
                     }
+                    else if (a == "parallel")
+                    {
+                        var rt = World.NativeRuntimeBridge.Runtime;
+                        if (rt != null)
+                        {
+                            rt.Mode = World.NativeRuntime.RuntimeMode.Parallel;
+                            DebugConsole.NewMessage("[ItemOptimizer] NativeRuntime mode: Parallel", Color.LimeGreen);
+                        }
+                        else
+                            DebugConsole.NewMessage("[ItemOptimizer] NativeRuntime not active.", Color.Red);
+                        return;
+                    }
+                    else if (a == "direct")
+                    {
+                        var rt = World.NativeRuntimeBridge.Runtime;
+                        if (rt != null)
+                        {
+                            rt.Mode = World.NativeRuntime.RuntimeMode.Direct;
+                            DebugConsole.NewMessage("[ItemOptimizer] NativeRuntime mode: Direct", Color.LimeGreen);
+                        }
+                        else
+                            DebugConsole.NewMessage("[ItemOptimizer] NativeRuntime not active.", Color.Red);
+                        return;
+                    }
                 }
                 DebugConsole.NewMessage(
                     $"[ItemOptimizer] NativeRuntime: {(World.NativeRuntimeBridge.IsEnabled ? "ON" : "OFF")}",
                     World.NativeRuntimeBridge.IsEnabled ? Color.LimeGreen : Color.Yellow);
                 if (World.NativeRuntimeBridge.IsEnabled)
                 {
+                    var rt = World.NativeRuntimeBridge.Runtime;
+                    if (rt != null)
+                        DebugConsole.NewMessage(
+                            $"[ItemOptimizer]   Mode: {rt.Mode}", Color.White);
                     if (World.NativeRuntimeBridge.LastStartupInfo != null)
                         DebugConsole.NewMessage(
                             $"[ItemOptimizer]   {World.NativeRuntimeBridge.LastStartupInfo}", Color.White);
                     // Show current zone tiers with distance to nearest player
-                    var rt = World.NativeRuntimeBridge.Runtime;
                     if (rt != null)
                     {
                         // Find nearest player position for distance calc

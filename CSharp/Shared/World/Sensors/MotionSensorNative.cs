@@ -7,11 +7,10 @@ namespace ItemOptimizerMod.World.Sensors
     /// <summary>
     /// NativeComponent wrapper for MotionSensor.
     /// Calls RunDetection (separate codepath from Prefix) for detection logic,
-    /// then emits signals and status effects via direct API calls matching the Prefix exactly.
+    /// then emits signals and status effects via CommandBuffer for thread-safe parallel execution.
     ///
-    /// Step 2 (DirectMode): bypasses CommandBuffer for signal/SE emission to guarantee
-    /// identical behavior to the Harmony Prefix path. The CommandBuffer path will be used
-    /// in Step 4 (Parallel mode) after proper validation.
+    /// Step 4 (Parallel mode): all side effects go through CommandBuffer (ctx.EmitSignal/EmitStatusEffect).
+    /// Commands are applied on main thread in Phase 5 after parallel tick completes.
     ///
     /// When registered, sets IsNativeManaged[id]=true so the Harmony Prefix
     /// returns false immediately (skip) — no double processing.
@@ -37,22 +36,18 @@ namespace ItemOptimizerMod.World.Sensors
             // Detection (sets _sensor.MotionDetected, handles timer gate + full scan)
             MotionSensorRewrite.RunDetection(_sensor, ctx.DeltaTime);
 
-            // Emit signal every frame — direct call matching Prefix exactly:
-            //   item.SendSignal(new Signal(signalOut, 1), conn)
+            // Emit signal every frame via CommandBuffer — stepValue: 1 matches Prefix exactly
             string signalOut = _sensor.MotionDetected ? _sensor.Output : _sensor.FalseOutput;
             if (!string.IsNullOrEmpty(signalOut))
             {
                 var conn = MotionSensorRewrite.GetStateOutConnection(_sensor);
                 if (conn != null)
-                    Host.SendSignal(new Signal(signalOut, 1), conn);
-                else
-                    Host.SendSignal(new Signal(signalOut, 1), "state_out");
+                    ctx.EmitSignal(conn, signalOut, stepValue: 1);
             }
 
-            // Status effect when detected — component-level call matching Prefix:
-            //   __instance.ApplyStatusEffects(ActionType.OnUse, deltaTime)
+            // Status effect when detected — component-level via CommandBuffer
             if (_sensor.MotionDetected)
-                _sensor.ApplyStatusEffects(ActionType.OnUse, ctx.DeltaTime);
+                ctx.EmitStatusEffect(ActionType.OnUse, _sensor);
         }
 
         public override void OnRegistered()

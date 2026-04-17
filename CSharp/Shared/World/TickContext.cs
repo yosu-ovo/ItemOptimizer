@@ -54,7 +54,7 @@ namespace ItemOptimizerMod.World
         public void EmitSignal(Connection target, string value, int stepValue = 0,
             Character sender = null)
         {
-            _commands.Add(new SignalCmd(target, value, stepValue, sender, _host));
+            _commands.Add(new SignalCmd(_host, target, value, stepValue, sender));
         }
 
         /// <summary>Modify a hull's water volume.</summary>
@@ -73,7 +73,13 @@ namespace ItemOptimizerMod.World
         /// <summary>Apply status effects from the host item.</summary>
         public void EmitStatusEffect(ActionType type)
         {
-            _commands.Add(new StatusEffectCmd(type, _host, DeltaTime));
+            _commands.Add(new StatusEffectCmd(type, null, _host, DeltaTime));
+        }
+
+        /// <summary>Apply status effects from a specific component.</summary>
+        public void EmitStatusEffect(ActionType type, ItemComponent component)
+        {
+            _commands.Add(new StatusEffectCmd(type, component, _host, DeltaTime));
         }
 
         /// <summary>Apply damage to a character.</summary>

@@ -84,7 +84,8 @@ namespace ItemOptimizerMod.World
             // Phase 3: Read phase (main thread)
             RunReadPhase(deltaTime);
 
-            // Phase 4: Tick phase
+            // Phase 4: Tick phase (buffers pre-allocated on main thread)
+            PreAllocateBuffers();
             switch (Mode)
             {
                 case RuntimeMode.Direct:
@@ -126,6 +127,18 @@ namespace ItemOptimizerMod.World
             }
         }
 
+        private void PreAllocateBuffers()
+        {
+            for (int i = 0; i < Graph.Zones.Count; i++)
+            {
+                var zone = Graph.Zones[i];
+                if (zone.Tier >= ZoneTier.Dormant) continue;
+                var buffer = GetOrCreateBuffer(zone.Id);
+                buffer.Clear();
+                zone.Commands = buffer;
+            }
+        }
+
         private void RunTickDirect(float deltaTime)
         {
             // Direct mode: tick on main thread, commands apply immediately
@@ -152,8 +165,7 @@ namespace ItemOptimizerMod.World
 
         private void TickZone(Zone zone, float deltaTime)
         {
-            var buffer = GetOrCreateBuffer(zone.Id);
-            buffer.Clear();
+            var buffer = zone.Commands; // pre-allocated by PreAllocateBuffers
 
             // Zone-level proxy overrides individual component ticks
             if (zone.Proxy != null)

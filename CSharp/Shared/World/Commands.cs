@@ -39,28 +39,31 @@ namespace ItemOptimizerMod.World
     //  Concrete command types (readonly structs, zero-alloc)
     // ═══════════════════════════════════════════════════════
 
-    /// <summary>Send a signal through a connection.</summary>
+    /// <summary>Send a signal through a connection via Item.SendSignal (matches vanilla API).</summary>
     public readonly struct SignalCmd : ICommand
     {
+        public readonly Item SourceItem;
         public readonly Connection Target;
         public readonly string Value;
         public readonly int StepValue;
         public readonly Character Sender;
-        public readonly Item Source;
 
-        public SignalCmd(Connection target, string value, int stepValue = 0,
-            Character sender = null, Item source = null)
+        public SignalCmd(Item sourceItem, Connection target, string value, int stepValue = 0,
+            Character sender = null)
         {
+            SourceItem = sourceItem;
             Target = target;
             Value = value;
             StepValue = stepValue;
             Sender = sender;
-            Source = source;
         }
 
         public void Apply()
         {
-            Target?.SendSignal(new Signal(Value, StepValue, Sender, Source));
+            if (SourceItem != null && Target != null)
+                SourceItem.SendSignal(new Signal(Value, StepValue, Sender, SourceItem), Target);
+            else
+                Target?.SendSignal(new Signal(Value, StepValue, Sender, SourceItem));
         }
     }
 
@@ -112,23 +115,28 @@ namespace ItemOptimizerMod.World
         }
     }
 
-    /// <summary>Apply status effects on an entity.</summary>
+    /// <summary>Apply status effects on a component or item.</summary>
     public readonly struct StatusEffectCmd : ICommand
     {
         public readonly ActionType Type;
+        public readonly ItemComponent Component;
         public readonly Item SourceItem;
         public readonly float DeltaTime;
 
-        public StatusEffectCmd(ActionType type, Item sourceItem, float deltaTime)
+        public StatusEffectCmd(ActionType type, ItemComponent component, Item sourceItem, float deltaTime)
         {
             Type = type;
+            Component = component;
             SourceItem = sourceItem;
             DeltaTime = deltaTime;
         }
 
         public void Apply()
         {
-            SourceItem?.ApplyStatusEffects(Type, DeltaTime);
+            if (Component != null)
+                Component.ApplyStatusEffects(Type, DeltaTime);
+            else
+                SourceItem?.ApplyStatusEffects(Type, DeltaTime);
         }
     }
 
