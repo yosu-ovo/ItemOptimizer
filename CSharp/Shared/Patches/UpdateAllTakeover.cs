@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Barotrauma;
 using Barotrauma.Items.Components;
@@ -15,15 +16,14 @@ namespace ItemOptimizerMod.Patches
 {
     /// <summary>
     /// Complete takeover of MapEntity.UpdateAll via Harmony prefix (return false).
-    /// Replaces ItemUpdatePatch (freeze/throttle) and ParallelDispatchPatch (worker dispatch)
-    /// with direct item.Update() calls — zero per-item Harmony overhead.
+    /// Handles item freeze/throttle with direct item.Update() calls — zero per-item Harmony overhead.
     /// </summary>
     static class UpdateAllTakeover
     {
         // ── Public state (read by PerfProfiler, StatsOverlay) ──
         internal static bool Enabled;
         internal static bool DispatchActive;
-        [ThreadStatic] internal static bool IsWorkerThread;
+        internal static readonly int MainThreadId = Environment.CurrentManagedThreadId;
 
         // ── Reflection caches ──
         private static FieldInfo _tickField;
@@ -44,7 +44,6 @@ namespace ItemOptimizerMod.Patches
         private static bool _hasGroundItem;
         private static bool _hasRules;
         private static bool _hasModOpt;
-        private static bool _parallelEnabled;
         private static bool _miscParallelEnabled;
         private static bool _hasProxy;
         private static bool _hasSignalGraph;
@@ -55,7 +54,6 @@ namespace ItemOptimizerMod.Patches
 
         // ── Item classification buffers (reused each frame) ──
         private static readonly List<Item> _mainItems = new(2048);
-        private static readonly List<Item> _workerItems = new(2048);
 
         // ── Gap shuffle buffer (reused each frame, Fisher-Yates) ──
         private static readonly List<Gap> _gapShuffleBuffer = new(512);
@@ -73,24 +71,11 @@ namespace ItemOptimizerMod.Patches
         private static readonly int[] ActiveUseCacheGen = new int[65536];
         private static readonly bool[] ActiveUseCacheVal = new bool[65536];
 
-        // ── Parallel dispatch state (migrated from ParallelDispatchPatch) ──
-        internal static int MainThreadId;
-        private static int _workerCount;
-        private static readonly long[] WorkerTicks = new long[7];
-        private static readonly int[] WorkerItemCounts = new int[7];
-        internal static long MainThreadTicks;
-        internal static int MainThreadItemCount;
-        private static bool _diagLogged;
-
         // ── Server-side callbacks (set by ItemOptimizerPlugin.Server, null on client) ──
         internal static Action OnPreUpdate;
         internal static Action<float> OnPostUpdate;
 
-        // Legacy fallback component check (only used when no pre-scan)
-        private static readonly HashSet<string> _unsafeTypeNames = new(StringComparer.Ordinal)
-        {
-            "StatusMonitor"
-        };
+        private static bool _diagLogged;
 
         // ────────────────────────────────────────────────
         //  Registration
@@ -99,8 +84,6 @@ namespace ItemOptimizerMod.Patches
         internal static void Register(Harmony harmony)
         {
             if (_patchAttached) return;
-
-            MainThreadId = Environment.CurrentManagedThreadId;
 
             // Reflection lookups
             _tickField = typeof(MapEntity).GetField("mapEntityUpdateTick",
@@ -136,13 +119,6 @@ namespace ItemOptimizerMod.Patches
             if (_updateProjSpecific == null)
                 LuaCsLogger.Log("[ItemOptimizer] UpdateAllTakeover: WARNING — UpdateAllProjSpecific not found (server build?).");
 
-            // Initialize worker crash log if parallel is configured
-            if (OptimizerConfig.EnableParallelDispatch)
-            {
-                WorkerCrashLog.Initialize();
-                WorkerCrashLog.WriteSessionHeader();
-            }
-
             // Single prefix on MapEntity.UpdateAll — this is our ONLY entry point
             var updateAll = AccessTools.Method(typeof(MapEntity), nameof(MapEntity.UpdateAll));
             harmony.Patch(updateAll,
@@ -165,7 +141,6 @@ namespace ItemOptimizerMod.Patches
             DispatchActive = false;
             OnPreUpdate = null;
             OnPostUpdate = null;
-            WorkerCrashLog.Reset();
             ClearItemCaches();
 
             var updateAll = AccessTools.Method(typeof(MapEntity), nameof(MapEntity.UpdateAll));
@@ -196,7 +171,6 @@ namespace ItemOptimizerMod.Patches
             _hasGroundItem = OptimizerConfig.EnableGroundItemThrottle;
             _hasRules = OptimizerConfig.RuleLookup.Count > 0;
             _hasModOpt = OptimizerConfig.ModOptLookup.Count > 0;
-            _parallelEnabled = OptimizerConfig.EnableParallelDispatch;
             _miscParallelEnabled = OptimizerConfig.EnableMiscParallel;
             _hasProxy = ProxyRegistry.HasHandlers;
             _hasSignalGraph = OptimizerConfig.SignalGraphMode > 0 && (SignalGraphEvaluator.IsCompiled || SignalGraphEvaluator.IsDirty);
@@ -371,14 +345,14 @@ namespace ItemOptimizerMod.Patches
         }
 
         // ────────────────────────────────────────────────
-        //  Item dispatch: freeze/throttle + classify + parallel
+        //  Item dispatch: freeze/throttle + update
         // ────────────────────────────────────────────────
 
         private static void DispatchItemUpdates(float dt, Camera cam)
         {
             DispatchActive = true;
 
-            // Pre-build HasStatusTag cache so parallel workers only do lock-free reads
+            // Pre-build HasStatusTag cache so reads are lock-free
             long preBuildStart = Stopwatch.GetTimestamp();
             HasStatusTagCachePatch.PreBuildAll();
             Stats.PhaseBPreBuildMs = (float)((Stopwatch.GetTimestamp() - preBuildStart) * _ticksToMs);
@@ -391,15 +365,6 @@ namespace ItemOptimizerMod.Patches
             }
 
             _mainItems.Clear();
-            _workerItems.Clear();
-            MainThreadTicks = 0;
-            MainThreadItemCount = 0;
-            _workerCount = Math.Max(1, Math.Min(OptimizerConfig.ParallelWorkerCount, 6));
-            for (int i = 0; i < _workerCount; i++)
-            {
-                WorkerTicks[i] = 0;
-                WorkerItemCounts[i] = 0;
-            }
 
             var priorityItems = LuaCsSetup.Instance?.Game?.UpdatePriorityItems;
             Item lastUpdatedItem = null;
@@ -410,11 +375,6 @@ namespace ItemOptimizerMod.Patches
                 long proxyPhysicsTicks = 0;
 
                 // ── Single-pass: skip / classify ──
-                // Check order optimized: cheapest/most-likely-to-skip first.
-                // 1. SignalGraph (flat array ~5ns, skips many)
-                // 2. Proxy (dictionary, only when handlers registered)
-                // 3. ShouldSkipItem (multiple checks, moderate cost)
-                // priorityItems check hoisted out of the hot loop when empty.
                 long classifyStart = Stopwatch.GetTimestamp();
                 bool hasPriority = priorityItems != null && priorityItems.Count > 0;
 
@@ -429,8 +389,7 @@ namespace ItemOptimizerMod.Patches
                         continue;
                     }
 
-                    // Wire skip: pure wire items have no meaningful Update (IsActive=false),
-                    // skipping the Item.Update shell overhead for ~1000+ wire items
+                    // Wire skip: pure wire items have no meaningful Update (IsActive=false)
                     if (_hasWireSkip && IsPureWireItem(item))
                     {
                         Stats.WireSkips++;
@@ -458,12 +417,6 @@ namespace ItemOptimizerMod.Patches
                     }
 
                     // Strategy 2: Ground Item Throttle
-                    // All ground items (ParentInventory==null): throttle StatusEffects + Components.
-                    // Items with active physics bodies get ProxyMinimalUpdate to preserve physics;
-                    // items without bodies (lights, labels, decals) get a pure skip.
-                    // Note: ColdStorage never covers ground items (ParentInventory==null → false),
-                    // so this is the primary throttle path for ALL non-wire, non-signalgraph ground items.
-                    // Skip: whitelist, items with active critical components (running machines, etc.)
                     if (_hasGroundItem && item.ParentInventory == null
                         && !OptimizerConfig.WhitelistLookup.Contains(
                             item.Prefab?.Identifier.Value ?? "")
@@ -473,30 +426,23 @@ namespace ItemOptimizerMod.Patches
                         ThrottleCounters[gid]++;
                         if (ThrottleCounters[gid] % OptimizerConfig.GroundItemSkipFrames != 0)
                         {
-                            // Only run physics preservation for items with active bodies
                             if (item.body != null && item.body.Enabled)
                                 ProxyMinimalUpdate(item, dt);
                             Stats.GroundItemSkips++;
                             skippedCount++;
                             continue;
                         }
-                        // Full frame: fall through to normal classify + dispatch
                     }
 
                     if (ShouldSkipItem(item))
                     {
                         skippedCount++;
-                        // Maintain network position sync even for skipped items
-                        // (prevents positionBuffer backup on client, keeps server PositionUpdateInterval ticking)
                         if (_itemUpdateNetPos != null && item.body != null && item.body.Enabled)
                             _itemUpdateNetPos(item, dt);
                         continue;
                     }
 
-                    if (_parallelEnabled && IsSafeForWorker(item))
-                        _workerItems.Add(item);
-                    else
-                        _mainItems.Add(item);
+                    _mainItems.Add(item);
                 }
 
                 // One-time classification diagnostic
@@ -504,68 +450,22 @@ namespace ItemOptimizerMod.Patches
                 {
                     _diagLogged = true;
                     LuaCsLogger.Log($"[ItemOptimizer] Takeover dispatch: " +
-                        $"total={Item.ItemList.Count}, main={_mainItems.Count}, " +
-                        $"worker={_workerItems.Count}, parallel={_parallelEnabled}");
+                        $"total={Item.ItemList.Count}, main={_mainItems.Count}");
                 }
 
-                // Server metrics: record skipped items this frame
+                // Server metrics
                 ServerMetrics.SkippedItems = skippedCount;
                 Stats.ProxyPhysicsMs = (float)(proxyPhysicsTicks * _ticksToMs);
                 Stats.PhaseBClassifyMs = (float)((Stopwatch.GetTimestamp() - classifyStart) * _ticksToMs);
 
-                // ── Launch workers ──
-                Task workerTask = null;
-                if (_workerItems.Count > 0)
-                {
-                    Stats.ParallelItems += _workerItems.Count;
-                    var snapshot = new List<Item>(_workerItems);
-                    workerTask = Task.Run(() => RunWorkers(snapshot, dt, cam));
-                }
-
-                // ── Main thread: update unsafe items ──
+                // ── Main thread: update all items ──
                 long mainLoopStart = Stopwatch.GetTimestamp();
-                Stats.MainThreadItems += _mainItems.Count;
-                if (_parallelEnabled)
+                foreach (var item in _mainItems)
                 {
-                    // Per-item timing needed for parallel load-balancing diagnostics
-                    foreach (var item in _mainItems)
-                    {
-                        lastUpdatedItem = item;
-                        long startTick = Stopwatch.GetTimestamp();
-                        item.Update(dt, cam);
-                        MainThreadTicks += Stopwatch.GetTimestamp() - startTick;
-                        MainThreadItemCount++;
-                    }
-                }
-                else
-                {
-                    // Fast path: no per-item timing overhead (~117us saved at 2344 items)
-                    foreach (var item in _mainItems)
-                    {
-                        lastUpdatedItem = item;
-                        item.Update(dt, cam);
-                    }
-                    MainThreadItemCount = _mainItems.Count;
+                    lastUpdatedItem = item;
+                    item.Update(dt, cam);
                 }
                 Stats.PhaseBMainLoopMs = (float)((Stopwatch.GetTimestamp() - mainLoopStart) * _ticksToMs);
-
-                // ── Wait for workers ──
-                if (workerTask != null)
-                {
-                    try
-                    {
-                        workerTask.Wait();
-                    }
-                    catch (AggregateException ae)
-                    {
-                        foreach (var e in ae.Flatten().InnerExceptions)
-                            DebugConsole.ThrowError($"[ItemOptimizer] Worker error: {e.Message}", e);
-                    }
-                    WorkerCrashLog.FlushToDisk();
-                }
-
-                Stats.RecordParallelFrame(_workerCount, WorkerTicks, WorkerItemCounts,
-                    MainThreadTicks, MainThreadItemCount);
             }
             catch (InvalidOperationException e)
             {
@@ -580,60 +480,6 @@ namespace ItemOptimizerMod.Patches
             {
                 DispatchActive = false;
             }
-        }
-
-        // ────────────────────────────────────────────────
-        //  Worker execution (migrated from ParallelDispatchPatch)
-        // ────────────────────────────────────────────────
-
-        private static void RunWorkers(List<Item> items, float dt, Camera cam)
-        {
-            int threadCount = _workerCount;
-            int totalItems = items.Count;
-            if (totalItems == 0) return;
-
-            int chunkSize = (totalItems + threadCount - 1) / threadCount;
-            var tasks = new Task[threadCount];
-
-            for (int t = 0; t < threadCount; t++)
-            {
-                int slotIndex = t;
-                int start = t * chunkSize;
-                int end = Math.Min(start + chunkSize, totalItems);
-                if (start >= totalItems)
-                {
-                    WorkerTicks[slotIndex] = 0;
-                    WorkerItemCounts[slotIndex] = 0;
-                    tasks[t] = Task.CompletedTask;
-                    continue;
-                }
-
-                tasks[t] = Task.Run(() =>
-                {
-                    IsWorkerThread = true;
-                    long startTick = Stopwatch.GetTimestamp();
-                    int count = 0;
-
-                    for (int i = start; i < end; i++)
-                    {
-                        try
-                        {
-                            items[i].Update(dt, cam);
-                            count++;
-                        }
-                        catch (Exception e)
-                        {
-                            WorkerCrashLog.RecordCrash(items[i], e, slotIndex);
-                        }
-                    }
-
-                    WorkerTicks[slotIndex] = Stopwatch.GetTimestamp() - startTick;
-                    WorkerItemCounts[slotIndex] = count;
-                    IsWorkerThread = false;
-                });
-            }
-
-            Task.WaitAll(tasks);
         }
 
         // ────────────────────────────────────────────────
@@ -800,7 +646,7 @@ namespace ItemOptimizerMod.Patches
             if (cached != 0) return cached > 0;
 
             // A "pure wire" item has Wire as its only meaningful component.
-            // Wire + ConnectionPanel + ItemContainer are all inert when connected.
+            // Wire + ConnectionPanel + ItemContainer + Holdable are all inert when connected.
             bool hasWire = false;
             bool hasOtherActive = false;
             foreach (var ic in item.Components)
@@ -808,66 +654,13 @@ namespace ItemOptimizerMod.Patches
                 var typeName = ic.GetType().Name;
                 if (typeName == "Wire")
                     hasWire = true;
-                else if (typeName != "ConnectionPanel" && typeName != "ItemContainer")
+                else if (typeName != "ConnectionPanel" && typeName != "ItemContainer" && typeName != "Holdable")
                     hasOtherActive = true;
             }
 
             bool isPure = hasWire && !hasOtherActive;
             IsWireCache[id] = isPure ? (sbyte)1 : (sbyte)-1;
             return isPure;
-        }
-
-        // ────────────────────────────────────────────────
-        //  Worker safety classification (migrated from ParallelDispatchPatch)
-        // ────────────────────────────────────────────────
-
-        private static bool IsSafeForWorker(Item item)
-        {
-            // Runtime state guards
-            if (!item.IsActive || item.IsLayerHidden || item.IsInRemoveQueue) return false;
-
-            // Held by character → writes to character state
-            if (item.ParentInventory?.Owner is Character) return false;
-
-            // Null prefab guard
-            if (item.Prefab == null) return false;
-
-            // Quarantined: this item crashed on a worker before
-            if (WorkerCrashLog.IsQuarantined(item.Prefab.Identifier.Value)) return false;
-
-            // Fallback: inline classification (conservative)
-            if (item.body != null && item.body.Enabled) return false;
-            var connections = item.Connections;
-            if (connections != null)
-                foreach (var conn in connections)
-                    if (conn.Wires.Count > 0) return false;
-            foreach (var ic in item.Components)
-                if (IsUnsafeComponentFallback(ic)) return false;
-            return true;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool IsUnsafeComponentFallback(ItemComponent ic)
-        {
-            return ic is Door
-                || ic is Pump
-                || ic is Reactor
-                || ic is PowerTransfer
-                || ic is Turret
-                || ic is Fabricator
-                || ic is Deconstructor
-                || ic is Steering
-                || ic is Engine
-                || ic is OxygenGenerator
-                || ic is MiniMap
-                || ic is Sonar
-                || ic is DockingPort
-                || ic is ElectricalDischarger
-                || ic is Controller
-                || ic is TriggerComponent
-                || ic is Rope
-                || ic is EntitySpawnerComponent
-                || _unsafeTypeNames.Contains(ic.GetType().Name);
         }
 
         // ────────────────────────────────────────────────

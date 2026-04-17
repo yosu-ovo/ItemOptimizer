@@ -43,6 +43,10 @@ namespace ItemOptimizerMod.Patches
         private static readonly AccessTools.FieldRef<PowerTransfer, float> Ref_powerLoad =
             AccessTools.FieldRefAccess<PowerTransfer, float>("powerLoad");
 
+        // ── FieldRef for Item.hasStatusEffectsOfType (skip no-op ApplyStatusEffects) ──
+        private static readonly AccessTools.FieldRef<Item, bool[]> Ref_hasStatusEffects =
+            AccessTools.FieldRefAccess<Item, bool[]>("hasStatusEffectsOfType");
+
         // ── Delegate for protected RefreshConnections / SetAllConnectionsDirty ──
         private static Action<PowerTransfer> _refreshConnections;
         private static Action<PowerTransfer> _setAllConnectionsDirty;
@@ -56,6 +60,7 @@ namespace ItemOptimizerMod.Patches
         {
             public Connection PowerValueOut;
             public Connection LoadValueOut;
+            public bool HasOnActiveEffects;
             public bool Resolved;
         }
         private static readonly ConnCache[] CachedConns = new ConnCache[65536];
@@ -125,6 +130,8 @@ namespace ItemOptimizerMod.Patches
                 }
             }
             cc.Resolved = true;
+            cc.HasOnActiveEffects = Ref_hasStatusEffects != null
+                && Ref_hasStatusEffects(pt.item)[(int)ActionType.OnActive];
             return ref cc;
         }
 
@@ -177,10 +184,12 @@ namespace ItemOptimizerMod.Patches
                 isBroken = false;
             }
 
-            __instance.ApplyStatusEffects(ActionType.OnActive, deltaTime);
-
             // SendSignals — using FieldRef to access vanilla's cached signal fields + cached Connection
             ref var cc = ref ResolveConnections(__instance);
+
+            // StatusEffects — skip if no OnActive effects defined (most junction boxes)
+            if (cc.HasOnActiveEffects)
+                __instance.ApplyStatusEffects(ActionType.OnActive, deltaTime);
 
             float powerReadingOut = 0;
             float loadReadingOut = extraLoad;
