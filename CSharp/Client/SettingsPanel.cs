@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Barotrauma;
+using ItemOptimizerMod.SignalGraph;
 using Microsoft.Xna.Framework;
 
 namespace ItemOptimizerMod
@@ -252,10 +253,6 @@ namespace ItemOptimizerMod
                 OptimizerConfig.EnableMiscParallel,
                 v => OptimizerConfig.EnableMiscParallel = v);
 
-            StrategyTickBox(content, "strategy_proxy", "strategy_proxy_desc",
-                OptimizerConfig.EnableProxySystem,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("proxy_system", v));
-
             StrategyDropDown(content, "strategy_signal_graph", "strategy_signal_graph_desc",
                 new[] { "signal_graph_off", "signal_graph_accel", "signal_graph_aggressive" },
                 OptimizerConfig.SignalGraphMode,
@@ -301,9 +298,45 @@ namespace ItemOptimizerMod
                 OptimizerConfig.EnableHullSpatialIndex,
                 v => OptimizerConfig.EnableHullSpatialIndex = v);
 
+            // -- Developer Tools --
+            SectionHeader(content, Localization.T("section_dev_tools"));
+
             StrategyTickBox(content, "strategy_spike_detector", "strategy_spike_detector_desc",
                 OptimizerConfig.EnableSpikeDetector,
                 v => { OptimizerConfig.EnableSpikeDetector = v; SpikeDetector.SetEnabled(v); });
+
+            StrategyTickBox(content, "strategy_allow_sync", "strategy_allow_sync_desc",
+                OptimizerConfig.AllowClientSync,
+                v => { OptimizerConfig.AllowClientSync = v; OptimizerConfig.AutoSave(); });
+
+            // Server perf overlay toggle
+            new GUITickBox(
+                new RectTransform(new Vector2(1f, 0.05f), content.RectTransform),
+                Localization.T("dev_serverperf"))
+            {
+                Selected = ServerPerfOverlay.Visible,
+                ToolTip = Localization.T("dev_serverperf_desc"),
+                OnSelected = tb =>
+                {
+                    ServerPerfOverlay.Visible = tb.Selected;
+                    return true;
+                }
+            };
+
+            // iorecord button
+            DevToolButton(content, "dev_iorecord", "dev_iorecord_desc", () =>
+            {
+                DebugConsole.ExecuteCommand("iorecord 1200");
+                DebugConsole.IsOpen = true;
+            });
+
+            // iosgraph button
+            DevToolButton(content, "dev_iosgraph", "dev_iosgraph_desc", () =>
+            {
+                DebugConsole.ExecuteCommand("iosgraph");
+                PrintSignalGraphAnalysis();
+                DebugConsole.IsOpen = true;
+            });
 
             // -- Client Optimization --
             SectionHeader(content, Localization.T("section_client_opt"));
@@ -369,11 +402,6 @@ namespace ItemOptimizerMod
             StatLine(content, "stats_statushud", Stats.AvgStatusHUDSkips);
             StatLine(content, "stats_affliction", Stats.AvgAfflictionDedupSkips);
             StatLine(content, "stats_wire_skip", Stats.AvgWireSkips);
-            StatLine(content, "stats_ladder_fix", Stats.AvgLadderFixCorrections);
-            StatLine(content, "stats_platform_fix", Stats.AvgPlatformFixCorrections);
-            StatLine(content, "stats_proxy_items", Stats.AvgProxyItems);
-            StatLine(content, "proxy_batch", Stats.AvgProxyBatchComputeMs);
-            StatLine(content, "proxy_sync", Stats.AvgProxySyncBackMs);
             StatLine(content, "stats_signal_graph_skip", Stats.AvgSignalGraphAccelSkips);
             StatLine(content, "stats_signal_graph_tick", Stats.AvgSignalGraphTickMs);
 
@@ -388,6 +416,79 @@ namespace ItemOptimizerMod
         {
             OptimizerConfig.BuildLookupTables();
             OptimizerConfig.AutoSave();
+        }
+
+        private static void PrintSignalGraphAnalysis()
+        {
+            bool isCN = Localization.T("btn_close") == "关闭";
+
+            int mode = OptimizerConfig.SignalGraphMode;
+            bool compiled = SignalGraph.SignalGraphEvaluator.IsCompiled;
+            int nodes = SignalGraph.SignalGraphEvaluator.AcceleratedNodeCount;
+            int regs = SignalGraph.SignalGraphEvaluator.RegisterCount;
+            float avgMs = SignalGraph.SignalGraphEvaluator.AvgTickMs;
+
+            DebugConsole.NewMessage("", Color.White);
+            if (isCN)
+            {
+                DebugConsole.NewMessage("──── 信号图加速状态分析 ────", Color.Cyan);
+                if (mode == 0)
+                {
+                    DebugConsole.NewMessage("当前模式: 关闭", Color.Yellow);
+                    DebugConsole.NewMessage("信号图加速未启用。如需加速电路处理，请在设置中选择\"加速模式\"或\"激进模式\"。", Color.Yellow);
+                }
+                else if (!compiled)
+                {
+                    DebugConsole.NewMessage("当前模式: " + (mode == 1 ? "加速" : "激进") + "，但尚未编译", Color.Red);
+                    DebugConsole.NewMessage("可能原因: 回合未开始，或潜艇没有可编译的电路组件。", Color.Yellow);
+                    DebugConsole.NewMessage("解决方法: 确保已加载含电路的潜艇并开始回合。", Color.Yellow);
+                }
+                else
+                {
+                    string modeName = mode == 1 ? "加速模式" : "激进模式";
+                    DebugConsole.NewMessage($"当前模式: {modeName} — 编译成功", Color.LimeGreen);
+                    DebugConsole.NewMessage($"已编译 {nodes} 个节点，使用 {regs} 个寄存器", Color.LimeGreen);
+                    if (avgMs > 0.5f)
+                        DebugConsole.NewMessage($"信号图每帧耗时 {avgMs:F2}ms — 偏高，电路可能过于复杂", Color.Yellow);
+                    else if (avgMs > 0.1f)
+                        DebugConsole.NewMessage($"信号图每帧耗时 {avgMs:F2}ms — 正常", Color.LimeGreen);
+                    else
+                        DebugConsole.NewMessage($"信号图每帧耗时 {avgMs:F2}ms — 很快", Color.LimeGreen);
+
+                    if (nodes == 0)
+                        DebugConsole.NewMessage("未检测到可加速的电路节点。潜艇可能不含逻辑门/传感器等信号组件。", Color.Yellow);
+                }
+            }
+            else
+            {
+                DebugConsole.NewMessage("──── Signal Graph Analysis ────", Color.Cyan);
+                if (mode == 0)
+                {
+                    DebugConsole.NewMessage("Mode: Off", Color.Yellow);
+                    DebugConsole.NewMessage("Signal graph acceleration is disabled. Enable 'Accelerate' or 'Aggressive' mode in settings to speed up circuit processing.", Color.Yellow);
+                }
+                else if (!compiled)
+                {
+                    DebugConsole.NewMessage("Mode: " + (mode == 1 ? "Accelerate" : "Aggressive") + " — NOT compiled", Color.Red);
+                    DebugConsole.NewMessage("Possible cause: Round not started, or submarine has no compilable circuit components.", Color.Yellow);
+                    DebugConsole.NewMessage("Fix: Load a submarine with circuits and start a round.", Color.Yellow);
+                }
+                else
+                {
+                    string modeName = mode == 1 ? "Accelerate" : "Aggressive";
+                    DebugConsole.NewMessage($"Mode: {modeName} — compiled OK", Color.LimeGreen);
+                    DebugConsole.NewMessage($"Compiled {nodes} nodes using {regs} registers", Color.LimeGreen);
+                    if (avgMs > 0.5f)
+                        DebugConsole.NewMessage($"Per-frame cost: {avgMs:F2}ms — high, circuits may be too complex", Color.Yellow);
+                    else if (avgMs > 0.1f)
+                        DebugConsole.NewMessage($"Per-frame cost: {avgMs:F2}ms — normal", Color.LimeGreen);
+                    else
+                        DebugConsole.NewMessage($"Per-frame cost: {avgMs:F2}ms — fast", Color.LimeGreen);
+
+                    if (nodes == 0)
+                        DebugConsole.NewMessage("No acceleratable nodes found. Submarine may lack logic gates, sensors, or signal components.", Color.Yellow);
+                }
+            }
         }
     }
 }

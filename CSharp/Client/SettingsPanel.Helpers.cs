@@ -238,5 +238,26 @@ namespace ItemOptimizerMod
                     skipBox.Text = currentSkip.ToString();
             };
         }
+        private static void DevToolButton(GUIComponent parent, string nameKey, string descKey, Action onClick)
+        {
+            var row = new GUILayoutGroup(
+                new RectTransform(new Vector2(1f, 0.05f), parent.RectTransform),
+                isHorizontal: true)
+            {
+                RelativeSpacing = 0.01f
+            };
+
+            new GUIButton(
+                new RectTransform(new Vector2(0.4f, 1f), row.RectTransform),
+                Localization.T(nameKey), Alignment.Center, "GUIButtonSmall")
+            {
+                ToolTip = Localization.T(descKey),
+                OnClicked = (btn, ud) =>
+                {
+                    onClick();
+                    return true;
+                }
+            };
+        }
     }
 }

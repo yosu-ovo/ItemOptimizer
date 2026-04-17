@@ -18,10 +18,9 @@ namespace ItemOptimizerMod
         private const int LineSpacing = 4;
         private const int BarHeight = 14;
         private const int BarMaxWidth = 180;
-        private const int LabelWidth = 80; // enough for "工作线程1" etc.
+        private const int LabelWidth = 80;
 
         private static readonly Color MainThreadColor = new Color(255, 165, 0);   // Orange
-        private static readonly Color WorkerColor = new Color(50, 205, 50);       // LimeGreen
         private static readonly Color ProxyColor = new Color(0, 206, 209);        // DarkTurquoise
 
         public static void Draw(SpriteBatch spriteBatch)
@@ -63,36 +62,20 @@ namespace ItemOptimizerMod
             }
             totalHeight -= LineSpacing;
 
-            // If takeover active, reserve space for dispatch/thread bars section
-            // When parallel dispatch is off, show only the main thread bar
+            // If takeover active, reserve space for dispatch bars section
             bool showDispatch = UpdateAllTakeover.Enabled;
-            bool fullParallel = showDispatch && OptimizerConfig.EnableParallelDispatch;
-            int threadCount = showDispatch ? (fullParallel ? Stats.DisplayThreadCount : 1) : 0;
-            float parallelSectionHeight = 0;
-            string parallelHeader = "";
-            string parallelItemsLine = "";
-            string parallelSavedLine = "";
+            float dispatchSectionHeight = 0;
+            string dispatchHeader = "";
 
             string dispatchTotalLine = "";
             string phaseBreakdown = "";
             string subPhaseB = "";
 
-            if (showDispatch && threadCount > 0)
+            if (showDispatch)
             {
-                parallelHeader = Localization.T("section_threads");
-                if (fullParallel)
-                {
-                    parallelItemsLine = Localization.Format("parallel_items", Stats.AvgParallelItems, Stats.AvgMainThreadItems);
-                    parallelSavedLine = Localization.Format("parallel_saved", Stats.ParallelSavedMs());
-                }
+                dispatchHeader = Localization.T("section_threads");
 
-                // Compute tracked vs total wall time
-                // "Overhead" now shows only the mod-added classification cost,
-                // not vanilla phases (A/D) which would exist without the mod.
-                // Main thread + proxy run sequentially in the dispatch loop.
-                // Workers overlap with main thread, so don't add them to wall time.
-                // When parallel is OFF, use PhaseBMainLoopMs for main thread time.
-                float mainThreadMs = fullParallel ? Stats.AvgThreadMs[0] : Stats.AvgPhaseBMainLoopMs;
+                float mainThreadMs = Stats.AvgPhaseBMainLoopMs;
                 float vanillaMs = Stats.AvgPhaseAMs + Stats.AvgPhaseCMs + Stats.AvgPhaseDMs;
                 float trackedMs = mainThreadMs + vanillaMs
                     + Stats.AvgProxyBatchComputeMs + Stats.AvgProxySyncBackMs + Stats.AvgProxyPhysicsMs;
@@ -100,23 +83,16 @@ namespace ItemOptimizerMod
                 dispatchTotalLine = string.Format(Localization.T("dispatch_total"),
                     Stats.AvgTotalDispatchMs, overheadMs);
 
-                // Per-phase diagnostic breakdown
                 phaseBreakdown = $"  A:{Stats.AvgPhaseAMs:F1} Proxy:{Stats.AvgPhaseProxyMs:F1} B:{Stats.AvgPhaseBMs:F1} C:{Stats.AvgPhaseCMs:F1} D:{Stats.AvgPhaseDMs:F1}";
                 subPhaseB = $"  B=HST:{Stats.AvgPhaseBPreBuildMs:F2} Cls:{Stats.AvgPhaseBClassifyMs:F1} Loop:{Stats.AvgPhaseBMainLoopMs:F1}";
 
-                float headerH = font.MeasureString(parallelHeader).Y + LineSpacing;
-                float barsH = threadCount * (BarHeight + LineSpacing);
+                float headerH = font.MeasureString(dispatchHeader).Y + LineSpacing;
+                float barsH = BarHeight + LineSpacing; // single main thread bar
                 float summaryH = font.MeasureString(dispatchTotalLine).Y + LineSpacing;
                 summaryH += font.MeasureString(phaseBreakdown).Y + LineSpacing;
                 summaryH += font.MeasureString(subPhaseB).Y + LineSpacing;
-                if (fullParallel)
-                {
-                    summaryH += font.MeasureString(parallelItemsLine).Y + LineSpacing;
-                    summaryH += font.MeasureString(parallelSavedLine).Y + LineSpacing;
-                }
-                parallelSectionHeight = headerH + barsH + summaryH;
+                dispatchSectionHeight = headerH + barsH + summaryH;
 
-                // Ensure width accommodates label + bar + stats text
                 float barSectionWidth = LabelWidth + BarMaxWidth + 100;
                 if (barSectionWidth > maxWidth) maxWidth = barSectionWidth;
             }
@@ -251,7 +227,7 @@ namespace ItemOptimizerMod
             }
 
             float panelW = maxWidth + Padding * 2;
-            float panelH = totalHeight + parallelSectionHeight + proxySectionHeight + serverSectionHeight + heldSectionHeight + Padding * 2;
+            float panelH = totalHeight + dispatchSectionHeight + proxySectionHeight + serverSectionHeight + heldSectionHeight + Padding * 2;
             float panelX = GameMain.GraphicsWidth - panelW - Padding;
             float panelY = Padding;
 
@@ -271,83 +247,53 @@ namespace ItemOptimizerMod
                 y += font.MeasureString(line).Y + LineSpacing;
             }
 
-            // Draw dispatch/thread bars
-            if (showDispatch && threadCount > 0)
+            // Draw dispatch bar
+            if (showDispatch)
             {
                 // Section header
                 GUI.DrawString(spriteBatch,
                     new Vector2(panelX + Padding, y),
-                    parallelHeader, Color.Cyan, font: font);
-                y += font.MeasureString(parallelHeader).Y + LineSpacing;
+                    dispatchHeader, Color.Cyan, font: font);
+                y += font.MeasureString(dispatchHeader).Y + LineSpacing;
 
-                // Find max ms across threads for normalization (use smoothed values)
-                // When parallel is OFF, main thread timing uses PhaseBMainLoopMs
-                // because the fast path skips per-item Stopwatch (AvgThreadMs[0] stays 0).
-                float mainMs = fullParallel ? Stats.AvgThreadMs[0] : Stats.AvgPhaseBMainLoopMs;
+                // Main thread bar
+                float mainMs = Stats.AvgPhaseBMainLoopMs;
                 float maxMs = Math.Max(0.01f, mainMs);
-                for (int i = 1; i < threadCount; i++)
-                {
-                    if (Stats.AvgThreadMs[i] > maxMs) maxMs = Stats.AvgThreadMs[i];
-                }
 
-                // Draw per-thread bars
                 float barX = panelX + Padding + LabelWidth;
-                for (int i = 0; i < threadCount; i++)
-                {
-                    float ms = (i == 0) ? mainMs : Stats.AvgThreadMs[i];
-                    int items = Stats.AvgThreadItems[i];
-                    bool isMain = (i == 0);
-                    string label = isMain
-                        ? Localization.T("parallel_main")
-                        : $"{Localization.T("parallel_worker")}{i}";
-                    Color barColor = isMain ? MainThreadColor : WorkerColor;
+                string label = Localization.T("parallel_main");
 
-                    // Label (left of bar)
-                    GUI.DrawString(spriteBatch,
-                        new Vector2(panelX + Padding, y + 1),
-                        label, barColor, font: font);
+                // Label
+                GUI.DrawString(spriteBatch,
+                    new Vector2(panelX + Padding, y + 1),
+                    label, MainThreadColor, font: font);
 
-                    // Bar background
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(BarMaxWidth, BarHeight),
-                        OverlayHelper.BarBgColor, isFilled: true);
+                // Bar background
+                GUI.DrawRectangle(spriteBatch,
+                    new Vector2(barX, y),
+                    new Vector2(BarMaxWidth, BarHeight),
+                    OverlayHelper.BarBgColor, isFilled: true);
 
-                    // Bar fill (proportional to max)
-                    float barW = Math.Max(1, (ms / maxMs) * BarMaxWidth);
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(barW, BarHeight),
-                        barColor * 0.8f, isFilled: true);
+                // Bar fill
+                float barW = Math.Max(1, (mainMs / maxMs) * BarMaxWidth);
+                GUI.DrawRectangle(spriteBatch,
+                    new Vector2(barX, y),
+                    new Vector2(barW, BarHeight),
+                    MainThreadColor * 0.8f, isFilled: true);
 
-                    // Bar outline
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(BarMaxWidth, BarHeight),
-                        barColor * 0.4f, isFilled: false);
+                // Bar outline
+                GUI.DrawRectangle(spriteBatch,
+                    new Vector2(barX, y),
+                    new Vector2(BarMaxWidth, BarHeight),
+                    MainThreadColor * 0.4f, isFilled: false);
 
-                    // Stats text (right of bar)
-                    string statsText = $"{ms:F1}ms ({items})";
-                    GUI.DrawString(spriteBatch,
-                        new Vector2(barX + BarMaxWidth + 6, y + 1),
-                        statsText, Color.White, font: font);
+                // Stats text
+                string statsText = $"{mainMs:F1}ms";
+                GUI.DrawString(spriteBatch,
+                    new Vector2(barX + BarMaxWidth + 6, y + 1),
+                    statsText, Color.White, font: font);
 
-                    y += BarHeight + LineSpacing;
-                }
-
-                // Items + Saved lines (only in full parallel mode)
-                if (fullParallel)
-                {
-                    GUI.DrawString(spriteBatch,
-                        new Vector2(panelX + Padding, y),
-                        parallelItemsLine, Color.White, font: font);
-                    y += font.MeasureString(parallelItemsLine).Y + LineSpacing;
-
-                    GUI.DrawString(spriteBatch,
-                        new Vector2(panelX + Padding, y),
-                        parallelSavedLine, Color.LimeGreen, font: font);
-                    y += font.MeasureString(parallelSavedLine).Y + LineSpacing;
-                }
+                y += BarHeight + LineSpacing;
 
                 // Total dispatch + overhead
                 GUI.DrawString(spriteBatch,

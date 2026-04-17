@@ -121,6 +121,17 @@ namespace ItemOptimizerMod
             ["strategy_spike_detector_desc"]= "检测单帧耗时过高的物品，用于诊断性能问题",
             ["spike_threshold_label"]      = "阈值(ms)",
 
+            // ── Developer Tools ──
+            ["section_dev_tools"]          = "── 开发者工具 ──",
+            ["strategy_allow_sync"]        = "同步录制",
+            ["strategy_allow_sync_desc"]   = "允许客户端请求服务端同步数据(iosync命令)，有少量网络开销",
+            ["dev_serverperf"]             = "服务端性能叠加层",
+            ["dev_serverperf_desc"]        = "显示服务端各系统耗时分解（需要多人游戏连接）",
+            ["dev_iorecord"]               = "录制性能数据",
+            ["dev_iorecord_desc"]          = "录制1200帧逐物品计时数据，保存为CSV。等待约20秒完成录制",
+            ["dev_iosgraph"]               = "信号图诊断",
+            ["dev_iosgraph_desc"]          = "显示信号图加速器状态：编译节点数、寄存器数、加速模式。打开控制台查看结果",
+
             // ── Client Optimization ──
             ["section_client_opt"]              = "── 客户端优化 ──",
             ["strategy_interaction_label"]      = "交互标签优化",
@@ -237,49 +248,10 @@ namespace ItemOptimizerMod
             ["config_saved"]          = "配置已保存",
             ["config_reloaded"]       = "配置已重载",
 
-            // Parallel dispatch (kept for backward compat, UI removed)
-            ["strategy_parallel"]     = "并行物品更新",
-            ["strategy_parallel_desc"]= "将安全物品分配到工作线程并行执行。实验性功能",
-            ["parallel_workers_label"]= "线程数",
+            // Dispatch overlay
             ["section_threads"]       = "── 线程分布 ──",
             ["parallel_main"]         = "主线程",
-            ["parallel_worker"]       = "工作线程",
-            ["parallel_saved"]        = "并行节省: ~{0:F1}ms",
             ["dispatch_total"]        = "总调度: {0:F1}ms (开销: {1:F1}ms)",
-            ["parallel_items"]        = "并行: ~{0:F0}  主线程: ~{1:F0}",
-
-            // Thread safety (kept for backward compat, UI removed)
-            ["section_thread_safety"]     = "── 线程安全分析 ──",
-            ["btn_run_scan"]              = "运行预扫描",
-            ["btn_rescan"]                = "重新扫描",
-            ["scan_status_valid"]         = "缓存有效 (hash {0})",
-            ["scan_status_none"]          = "未扫描",
-            ["scan_summary"]              = "安全: {0} | 条件: {1} | 不安全: {2}",
-            ["scan_running"]              = "正在扫描...",
-            ["scan_complete"]             = "扫描完成",
-            ["safety_safe"]               = "安全",
-            ["safety_conditional"]        = "条件",
-            ["safety_unsafe"]             = "不安全",
-            ["override_auto"]             = "[自动]",
-            ["override_force_safe"]       = "[强制安全]",
-            ["override_force_unsafe"]     = "[强制不安全]",
-            ["reason_dangerous_component"]= "危险组件",
-            ["reason_connection_panel"]   = "连接面板",
-            ["reason_physics_body"]       = "物理体",
-            ["reason_se_duration"]        = "SE持续时间",
-            ["reason_se_interval"]        = "SE间隔",
-            ["reason_se_affliction"]      = "SE伤害",
-            ["reason_se_spawn"]           = "SE生成",
-            ["reason_se_fire"]            = "SE火焰",
-            ["reason_se_explosion"]       = "SE爆炸",
-            ["reason_se_remove_item"]     = "SE移除物品",
-            ["reason_se_external_target"] = "SE外部目标",
-            ["reason_se_give_skill"]      = "SE技能",
-            ["reason_se_give_talent"]     = "SE天赋",
-            ["reason_se_drop_item"]       = "SE丢弃物品",
-            ["reason_se_trigger_event"]   = "SE触发事件",
-            ["reason_se_use_item"]        = "SE使用物品",
-            ["reason_manual_override"]    = "手动覆盖",
         };
 
         private static readonly Dictionary<string, string> EN = new()
@@ -398,6 +370,17 @@ namespace ItemOptimizerMod
             ["strategy_spike_detector_desc"]= "Detect items causing per-frame spikes, for performance diagnosis",
             ["spike_threshold_label"]      = "Threshold(ms)",
 
+            // ── Developer Tools ──
+            ["section_dev_tools"]          = "── Developer Tools ──",
+            ["strategy_allow_sync"]        = "Sync Recording",
+            ["strategy_allow_sync_desc"]   = "Allow clients to request server sync snapshots (iosync command), minor network overhead",
+            ["dev_serverperf"]             = "Server Perf Overlay",
+            ["dev_serverperf_desc"]        = "Show server-side per-system timing breakdown (requires multiplayer connection)",
+            ["dev_iorecord"]               = "Record Perf Data",
+            ["dev_iorecord_desc"]          = "Record 1200 frames of per-item timing to CSV. Takes ~20 seconds to complete",
+            ["dev_iosgraph"]               = "Signal Graph Info",
+            ["dev_iosgraph_desc"]          = "Show signal graph accelerator status: compiled nodes, registers, mode. Opens console to view results",
+
             // ── Client Optimization ──
             ["section_client_opt"]              = "── Client Optimization ──",
             ["strategy_interaction_label"]      = "Interaction Label Opt",
@@ -514,49 +497,10 @@ namespace ItemOptimizerMod
             ["config_saved"]          = "Config saved",
             ["config_reloaded"]       = "Config reloaded",
 
-            // Parallel dispatch (kept for backward compat, UI removed)
-            ["strategy_parallel"]     = "Parallel Item Update",
-            ["strategy_parallel_desc"]= "Dispatch safe items to worker threads for parallel Update execution. Experimental.",
-            ["parallel_workers_label"]= "Workers",
+            // Dispatch overlay
             ["section_threads"]       = "── Thread Distribution ──",
             ["parallel_main"]         = "Main",
-            ["parallel_worker"]       = "Worker",
-            ["parallel_saved"]        = "Parallel saved: ~{0:F1}ms",
             ["dispatch_total"]        = "Total: {0:F1}ms (overhead: {1:F1}ms)",
-            ["parallel_items"]        = "Parallel: ~{0:F0}  Main: ~{1:F0}",
-
-            // Thread safety (kept for backward compat, UI removed)
-            ["section_thread_safety"]     = "── Thread Safety Analysis ──",
-            ["btn_run_scan"]              = "Run Pre-Scan",
-            ["btn_rescan"]                = "Re-scan",
-            ["scan_status_valid"]         = "Cache valid (hash {0})",
-            ["scan_status_none"]          = "No scan",
-            ["scan_summary"]              = "Safe: {0} | Conditional: {1} | Unsafe: {2}",
-            ["scan_running"]              = "Scanning...",
-            ["scan_complete"]             = "Scan complete",
-            ["safety_safe"]               = "Safe",
-            ["safety_conditional"]        = "Cond",
-            ["safety_unsafe"]             = "Unsafe",
-            ["override_auto"]             = "[Auto]",
-            ["override_force_safe"]       = "[F:Safe]",
-            ["override_force_unsafe"]     = "[F:Unsafe]",
-            ["reason_dangerous_component"]= "DangerousComponent",
-            ["reason_connection_panel"]   = "ConnectionPanel",
-            ["reason_physics_body"]       = "PhysicsBody",
-            ["reason_se_duration"]        = "SE:Duration",
-            ["reason_se_interval"]        = "SE:Interval",
-            ["reason_se_affliction"]      = "SE:Affliction",
-            ["reason_se_spawn"]           = "SE:Spawn",
-            ["reason_se_fire"]            = "SE:Fire",
-            ["reason_se_explosion"]       = "SE:Explosion",
-            ["reason_se_remove_item"]     = "SE:RemoveItem",
-            ["reason_se_external_target"] = "SE:ExternalTarget",
-            ["reason_se_give_skill"]      = "SE:GiveSkill",
-            ["reason_se_give_talent"]     = "SE:GiveTalent",
-            ["reason_se_drop_item"]       = "SE:DropItem",
-            ["reason_se_trigger_event"]   = "SE:TriggerEvent",
-            ["reason_se_use_item"]        = "SE:UseItem",
-            ["reason_manual_override"]    = "ManualOverride",
         };
 
         private static bool IsChinese
