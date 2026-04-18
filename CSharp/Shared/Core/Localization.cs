@@ -12,7 +12,7 @@ namespace ItemOptimizerMod
         private static Dictionary<string, string> _fallback;
         private static string _loadedLangCode;
 
-        private static readonly Dictionary<string, string> LangMap = new()
+        private static readonly Dictionary<string, string> LangMap = new(StringComparer.OrdinalIgnoreCase)
         {
             ["English"]              = "en",
             ["Simplified Chinese"]   = "zh-CN",
@@ -40,7 +40,8 @@ namespace ItemOptimizerMod
             string lang;
             try
             {
-                lang = GameSettings.CurrentConfig.Language.Value.Value ?? "English";
+                lang = GameSettings.CurrentConfig.Language.ToString();
+                if (string.IsNullOrEmpty(lang) || lang == "None") lang = "English";
             }
             catch
             {
