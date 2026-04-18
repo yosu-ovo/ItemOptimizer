@@ -10,6 +10,7 @@ namespace ItemOptimizerMod
     {
         private static Dictionary<string, string> _current;
         private static Dictionary<string, string> _fallback;
+        private static string _loadedLangCode;
 
         private static readonly Dictionary<string, string> LangMap = new()
         {
@@ -33,7 +34,8 @@ namespace ItemOptimizerMod
         /// </summary>
         public static void Init()
         {
-            _fallback = LoadFile("en");
+            if (_fallback == null)
+                _fallback = LoadFile("en");
 
             string lang;
             try
@@ -46,6 +48,9 @@ namespace ItemOptimizerMod
             }
 
             string code = LangMap.TryGetValue(lang, out var c) ? c : "en";
+
+            if (code == _loadedLangCode) return;
+
             if (code == "en")
             {
                 _current = _fallback;
@@ -55,6 +60,7 @@ namespace ItemOptimizerMod
                 _current = LoadFile(code) ?? _fallback;
             }
 
+            _loadedLangCode = code;
             int count = _current?.Count ?? 0;
             LuaCsLogger.Log($"[ItemOptimizer] Localization loaded: lang={lang} code={code} keys={count}");
         }

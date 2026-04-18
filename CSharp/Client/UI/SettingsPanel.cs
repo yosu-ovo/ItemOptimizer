@@ -64,6 +64,8 @@ namespace ItemOptimizerMod
             var pauseMenu = GUI.PauseMenu;
             if (pauseMenu == null) return;
 
+            Localization.Init();
+
             frame = new GUIFrame(
                 new RectTransform(new Vector2(0.55f, 0.90f), pauseMenu.RectTransform, Anchor.Center));
 

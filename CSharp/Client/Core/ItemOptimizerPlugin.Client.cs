@@ -72,6 +72,8 @@ namespace ItemOptimizerMod
             {
                 if (GUI.PauseMenuOpen)
                 {
+                    Localization.Init();
+
                     var buttonList = FindPauseMenuButtonList();
                     if (buttonList == null) return;
 
