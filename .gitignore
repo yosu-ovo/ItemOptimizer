@@ -2,6 +2,7 @@
 Optimizerlist/
 ItemOptimizer_config.xml
 barotrauma_items.db
+Data/
 
 # Build output
 bin/
