@@ -175,7 +175,7 @@
   "mod_items_count": "({0} アイテム)",
   "mod_batch_add": "一括追加",
   "mod_no_rule": "ルールなし",
-  "mod_rule_summary": "Rule: {0}/{1}",
+  "mod_rule_summary": "ルール: {0}/{1}",
   "mod_add_rule": "ルール追加",
   "rule_added": "追加済み",
   "rule_removed": "削除済み",

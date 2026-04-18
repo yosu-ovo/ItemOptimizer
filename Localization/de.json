@@ -1,7 +1,7 @@
 {
   "mod_name": "ItemOptimizer",
 
-  "btn_settings": "ItemOptimizer",
+  "btn_settings": "Item-Optimierung",
   "btn_close": "Schließen",
   "btn_save": "Speichern",
   "btn_reload": "Neu laden",
@@ -33,7 +33,7 @@
   "strategy_water_det_rewrite_desc": "Vollständig optimierter Ersatz der Wasserdetektor-Logik, großer Leistungsgewinn",
 
   "sensor_off": "Aus",
-  "sensor_rewrite": "Rewrite",
+  "sensor_rewrite": "Neuschreibung",
   "strategy_motion_sensor": "Bewegungssensor",
   "strategy_motion_sensor_desc": "Optimierter Bewegungssensor-Ersatz. Höheres Intervall spart CPU, verlangsamt aber die Reaktion",
   "strategy_water_detector_mode": "Wasserdetektor",

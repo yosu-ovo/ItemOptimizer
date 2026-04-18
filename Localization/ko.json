@@ -175,7 +175,7 @@
   "mod_items_count": "({0}개 아이템)",
   "mod_batch_add": "일괄 추가",
   "mod_no_rule": "규칙 없음",
-  "mod_rule_summary": "Rule: {0}/{1}",
+  "mod_rule_summary": "규칙: {0}/{1}",
   "mod_add_rule": "규칙 추가",
   "rule_added": "추가됨",
   "rule_removed": "제거됨",

@@ -175,7 +175,7 @@
   "mod_items_count": "({0} 物品)",
   "mod_batch_add": "批次新增",
   "mod_no_rule": "無規則",
-  "mod_rule_summary": "Rule: {0}/{1}",
+  "mod_rule_summary": "規則: {0}/{1}",
   "mod_add_rule": "新增規則",
   "rule_added": "已新增",
   "rule_removed": "已移除",
