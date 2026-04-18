@@ -47,7 +47,7 @@ namespace ItemOptimizerMod
         public static bool EnableMotionSensorThrottle = true;
         public static bool EnableWearableThrottle = true;
         public static bool EnableWaterDetectorThrottle = true;
-        public static bool EnableDoorThrottle = true;
+        public static bool EnableDoorThrottle = false; // race condition: ReceiveSignal can change isOpen while Update is skipped
         public static bool EnableMotionSensorRewrite = true;   // Replaces MotionSensorThrottle + MotionSensorOpt
         public static bool EnableWaterDetectorRewrite = true;  // Replaces WaterDetectorThrottle + WaterDetectorOpt
         public static bool EnableRelayRewrite = true;           // Replaces RelayOpt
@@ -93,6 +93,7 @@ namespace ItemOptimizerMod
 
         // NativeComponent runtime (experimental — default off)
         public static bool EnableNativeRuntime = false;
+        public static bool EnableZoneSkip = true;  // Skip Item.Update for items in Dormant/Unloaded zones (requires NativeRuntime)
 
         // Spike detector (off by default — adds ~1-2ms overhead when enabled)
         public static bool EnableSpikeDetector = false;
@@ -372,7 +373,7 @@ namespace ItemOptimizerMod
                 var dr = root.Element("DoorThrottle");
                 if (dr != null)
                 {
-                    EnableDoorThrottle = ParseBool(dr.Attribute("enabled")?.Value, true);
+                    EnableDoorThrottle = ParseBool(dr.Attribute("enabled")?.Value, false);
                     DoorSkipFrames = ParseInt(dr.Attribute("skipFrames")?.Value, 2, 1, 30);
                 }
 
@@ -453,6 +454,7 @@ namespace ItemOptimizerMod
                 var nrt = root.Element("NativeRuntime");
                 if (nrt != null)
                     EnableNativeRuntime = ParseBool(nrt.Attribute("enabled")?.Value, false);
+                    EnableZoneSkip = ParseBool(nrt.Attribute("zoneSkip")?.Value, true);
 
                 var proxy = root.Element("ProxySystem");
                 if (proxy != null)
@@ -574,7 +576,8 @@ namespace ItemOptimizerMod
                         new XElement("SignalGraphAccel",
                             new XAttribute("mode", SignalGraphMode)),
                         new XElement("NativeRuntime",
-                            new XAttribute("enabled", EnableNativeRuntime)),
+                            new XAttribute("enabled", EnableNativeRuntime),
+                            new XAttribute("zoneSkip", EnableZoneSkip)),
                         new XElement("ProxySystem",
                             new XAttribute("enabled", EnableProxySystem)),
                         new XElement("InteractionLabel",

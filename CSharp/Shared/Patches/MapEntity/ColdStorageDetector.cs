@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Barotrauma;
+using Barotrauma.Items.Components;
 
 namespace ItemOptimizerMod
 {
@@ -17,12 +18,22 @@ namespace ItemOptimizerMod
 
         /// <summary>
         /// Conservative: item is in a non-character container (locker, crate, etc.)
+        /// Excludes CircuitBox internals — they actively process signals and must update.
         /// </summary>
         public static bool IsInColdStorage(Item item)
         {
             if (item.ParentInventory == null) return false;
             if (item.ParentInventory is CharacterInventory) return false;
-            return item.GetRootInventoryOwner() is not Character;
+
+            var owner = item.GetRootInventoryOwner();
+            if (owner is Character) return false;
+
+            // CircuitBox internal items must always update for signal processing.
+            // Without this, CB controller circuits stop sending signals to reactors/pumps/etc.
+            if (owner is Item ownerItem && ownerItem.GetComponent<CircuitBox>() != null)
+                return false;
+
+            return true;
         }
 
         /// <summary>
@@ -59,7 +70,13 @@ namespace ItemOptimizerMod
             if (item.ParentInventory != null)
             {
                 var rootOwner = item.GetRootInventoryOwner();
-                if (rootOwner is not Character character) return true; // in a locker/crate
+                if (rootOwner is not Character character)
+                {
+                    // CircuitBox internals must not be throttled
+                    if (rootOwner is Item ownerItem && ownerItem.GetComponent<CircuitBox>() != null)
+                        return false;
+                    return true; // in a locker/crate
+                }
 
                 var topItem = item.RootContainer ?? item;
 

@@ -427,10 +427,12 @@ namespace ItemOptimizerMod.SignalGraph
                     _eq_output[si] = setOut;
             }
 
-            if (in0 != null && in0 != "0") { _eq_recv0[si] = in0; _eq_tsr0[si] = 0f; }
+            // Unlike BoolOp, "0" IS a valid signal for equality comparison.
+            // Vanilla EqualsComponent resets timeSinceReceived on ANY signal value.
+            if (in0 != null) { _eq_recv0[si] = in0; _eq_tsr0[si] = 0f; }
             else _eq_tsr0[si] += dt;
 
-            if (in1 != null && in1 != "0") { _eq_recv1[si] = in1; _eq_tsr1[si] = 0f; }
+            if (in1 != null) { _eq_recv1[si] = in1; _eq_tsr1[si] = 0f; }
             else _eq_tsr1[si] += dt;
 
             float tf = _eq_timeFrame[si];
@@ -455,14 +457,16 @@ namespace ItemOptimizerMod.SignalGraph
                     _gt_output[si] = setOut;
             }
 
-            if (in0 != null && in0 != "0")
+            // Unlike BoolOp, "0" IS a valid numerical input for comparison.
+            // Vanilla GreaterComponent resets timeSinceReceived on ANY signal value.
+            if (in0 != null)
             {
                 float.TryParse(in0, NumberStyles.Any, CultureInfo.InvariantCulture, out _gt_val0[si]);
                 _gt_tsr0[si] = 0f;
             }
             else _gt_tsr0[si] += dt;
 
-            if (in1 != null && in1 != "0")
+            if (in1 != null)
             {
                 float.TryParse(in1, NumberStyles.Any, CultureInfo.InvariantCulture, out _gt_val1[si]);
                 _gt_tsr1[si] = 0f;
@@ -486,10 +490,12 @@ namespace ItemOptimizerMod.SignalGraph
             // set_output: Arith components don't use output/falseOutput the same way,
             // but the connection exists — just capture it silently for now.
 
-            if (in0 != null && in0 != "0") { _arith_recv0[si] = in0; _arith_tsr0[si] = 0f; }
+            // Unlike BoolOp, "0" IS a valid numerical input for arithmetic.
+            // Vanilla ArithmeticComponent resets timeSinceReceived on ANY signal value.
+            if (in0 != null) { _arith_recv0[si] = in0; _arith_tsr0[si] = 0f; }
             else _arith_tsr0[si] += dt;
 
-            if (in1 != null && in1 != "0") { _arith_recv1[si] = in1; _arith_tsr1[si] = 0f; }
+            if (in1 != null) { _arith_recv1[si] = in1; _arith_tsr1[si] = 0f; }
             else _arith_tsr1[si] += dt;
 
             float tf = _arith_timeFrame[si];

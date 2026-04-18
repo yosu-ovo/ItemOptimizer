@@ -336,6 +336,18 @@ namespace ItemOptimizerMod.Proxy
             LastSyncBackTicks = 0;
         }
 
+        /// <summary>
+        /// Clear attachment tracking for round transitions.
+        /// Old-round entities are already destroyed — cannot call Detach().
+        /// Handler registrations (prefab-based) are preserved across rounds.
+        /// </summary>
+        public static void ClearStaleAttachments()
+        {
+            _attachedIds.Clear();
+            LastBatchComputeTicks = 0;
+            LastSyncBackTicks = 0;
+        }
+
         /// <summary>Detach all items and clear all handlers. Called on Dispose.</summary>
         public static void DetachAll()
         {

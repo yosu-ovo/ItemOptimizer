@@ -159,6 +159,10 @@ namespace ItemOptimizerMod.World
 
         private ZoneTier EvaluateTier(Zone zone, IReadOnlyList<Character> players)
         {
+            // No players → keep current tier (prevents mass-freeze during round transitions or free camera)
+            if (players.Count == 0)
+                return zone.Tier;
+
             float minDist = float.MaxValue;
 
             for (int i = 0; i < players.Count; i++)

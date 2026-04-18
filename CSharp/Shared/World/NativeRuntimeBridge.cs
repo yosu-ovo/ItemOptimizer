@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Text;
 using Barotrauma;
 using Barotrauma.Items.Components;
+using HarmonyLib;
 using ItemOptimizerMod.Patches;
 using ItemOptimizerMod.World.Sensors;
 using Microsoft.Xna.Framework;
@@ -24,6 +25,9 @@ namespace ItemOptimizerMod.World
 
         internal static void OnRoundStart()
         {
+            // Clean up stale state from previous round (OnRoundEnd may not have been called)
+            if (IsEnabled) OnRoundEnd();
+
             if (!OptimizerConfig.EnableNativeRuntime) return;
 
             Runtime = new NativeRuntime();
@@ -77,6 +81,10 @@ namespace ItemOptimizerMod.World
 
             IsEnabled = true;
 
+            // Register independent tick hook (ensures NativeRuntime ticks even when iotakeover is OFF)
+            if (ItemOptimizerPlugin.harmony != null)
+                RegisterTickHook(ItemOptimizerPlugin.harmony);
+
             // Build diagnostic string
             var sb = new StringBuilder();
             sb.Append($"{_registeredSensors.Count} sensors in {Runtime.Graph.Zones.Count} zones");
@@ -129,6 +137,10 @@ namespace ItemOptimizerMod.World
         {
             if (!IsEnabled) return;
 
+            // Unregister independent tick hook
+            if (ItemOptimizerPlugin.harmony != null)
+                UnregisterTickHook(ItemOptimizerPlugin.harmony);
+
             for (int i = 0; i < _registeredSensors.Count; i++)
                 Runtime.Unregister(_registeredSensors[i]);
             _registeredSensors.Clear();
@@ -137,11 +149,66 @@ namespace ItemOptimizerMod.World
             Runtime = null;
             IsEnabled = false;
             LastStartupInfo = null;
+
+            // Clear dormant flags so no items are frozen after runtime stops
+            System.Array.Clear(UpdateAllTakeover._dormantSubFlags, 0,
+                UpdateAllTakeover._dormantSubFlags.Length);
         }
 
         internal static void Tick(float deltaTime, Camera cam)
         {
             Runtime?.Tick(deltaTime, cam);
+        }
+
+        // ═══ Independent Tick Hook (方案C) ═══
+        // Postfix on MapEntity.UpdateAll — runs AFTER vanilla or takeover prefix.
+        // When UpdateAllTakeover is ON, its dispatch loop already calls Rebuild + Tick.
+        // When UpdateAllTakeover is OFF, this postfix provides the tick source.
+
+        private static bool _hasTickHook;
+
+        internal static void RegisterTickHook(Harmony harmony)
+        {
+            if (_hasTickHook) return;
+            var updateAll = AccessTools.Method(typeof(MapEntity), nameof(MapEntity.UpdateAll),
+                new[] { typeof(float), typeof(Camera) });
+            if (updateAll == null)
+            {
+                LuaCsLogger.LogError("[ItemOptimizer] NativeRuntimeBridge: MapEntity.UpdateAll not found for tick hook!");
+                return;
+            }
+            harmony.Patch(updateAll,
+                postfix: new HarmonyMethod(AccessTools.Method(typeof(NativeRuntimeBridge), nameof(PostUpdateAllTick))));
+            _hasTickHook = true;
+            LuaCsLogger.Log("[ItemOptimizer] NativeRuntime independent tick hook registered");
+        }
+
+        internal static void UnregisterTickHook(Harmony harmony)
+        {
+            if (!_hasTickHook) return;
+            var updateAll = AccessTools.Method(typeof(MapEntity), nameof(MapEntity.UpdateAll),
+                new[] { typeof(float), typeof(Camera) });
+            if (updateAll != null)
+                harmony.Unpatch(updateAll,
+                    AccessTools.Method(typeof(NativeRuntimeBridge), nameof(PostUpdateAllTick)));
+            _hasTickHook = false;
+        }
+
+        /// <summary>
+        /// Postfix on MapEntity.UpdateAll. Provides independent tick for NativeRuntime
+        /// when UpdateAllTakeover is OFF. When takeover is ON, its dispatch loop
+        /// already handles Rebuild + Tick — this postfix is a no-op.
+        /// </summary>
+        private static void PostUpdateAllTick(float deltaTime, Camera cam)
+        {
+            if (!IsEnabled) return;
+            // When takeover is ON, the dispatch loop already called
+            // HullCharacterTracker.Rebuild() and NativeRuntimeBridge.Tick()
+            if (UpdateAllTakeover.Enabled) return;
+
+            HullCharacterTracker.Rebuild();
+            Tick(deltaTime, cam);
+            Stats.EndFrame();
         }
     }
 }

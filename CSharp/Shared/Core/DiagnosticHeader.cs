@@ -14,7 +14,7 @@ namespace ItemOptimizerMod
     /// </summary>
     static class DiagnosticHeader
     {
-        public const string ModVersion = "iter-21";
+        public const string ModVersion = "iter-21-7";
 
         /// <summary>
         /// Write diagnostic comment block into a StringBuilder, before the CSV column header.

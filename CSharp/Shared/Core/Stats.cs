@@ -36,6 +36,10 @@ namespace ItemOptimizerMod
         internal static int SignalGraphAccelSkips;
         internal static float SignalGraphTickMs;
 
+        // ── Zone-based structure skip ──
+        internal static int ZoneSkips;
+        internal static int ZoneCharSkips;
+
         // ── Total dispatch wall time (entire UpdateAllPrefix) ──
         internal static float TotalDispatchMs;
 
@@ -89,6 +93,10 @@ namespace ItemOptimizerMod
         internal static float AvgSignalGraphAccelSkips;
         internal static float AvgSignalGraphTickMs;
 
+        // ── Zone-based structure skip averages ──
+        internal static float AvgZoneSkips;
+        internal static float AvgZoneCharSkips;
+
         // ── Total dispatch average ──
         internal static float AvgTotalDispatchMs;
 
@@ -127,6 +135,10 @@ namespace ItemOptimizerMod
             // Signal graph accel EMA
             AvgSignalGraphAccelSkips = AvgSignalGraphAccelSkips * (1f - Smoothing) + SignalGraphAccelSkips * Smoothing;
             AvgSignalGraphTickMs = AvgSignalGraphTickMs * (1f - Smoothing) + SignalGraphTickMs * Smoothing;
+
+            // Zone skip EMA
+            AvgZoneSkips = AvgZoneSkips * (1f - Smoothing) + ZoneSkips * Smoothing;
+            AvgZoneCharSkips = AvgZoneCharSkips * (1f - Smoothing) + ZoneCharSkips * Smoothing;
 
             // Per-phase diagnostic EMA
             AvgPhaseAMs = AvgPhaseAMs * (1f - Smoothing) + PhaseAMs * Smoothing;
@@ -167,6 +179,8 @@ namespace ItemOptimizerMod
             ProxyPhysicsMs = 0;
             SignalGraphAccelSkips = 0;
             SignalGraphTickMs = 0;
+            ZoneSkips = 0;
+            ZoneCharSkips = 0;
             TotalDispatchMs = 0;
             PhaseAMs = 0;
             PhaseProxyMs = 0;
@@ -195,7 +209,8 @@ namespace ItemOptimizerMod
                  + AvgAfflictionDedupSkips * 0.001f
                  + AvgAnimLODSkipped * 0.005f
                  + AvgAnimLODHalfRate * 0.002f
-                 + AvgCharStaggerSkipped * 0.01f;
+                 + AvgCharStaggerSkipped * 0.01f
+                 + AvgZoneSkips * 0.001f;
         }
 
         internal static void Reset()
@@ -245,6 +260,8 @@ namespace ItemOptimizerMod
             AvgProxyPhysicsMs = 0;
             AvgSignalGraphAccelSkips = 0;
             AvgSignalGraphTickMs = 0;
+            AvgZoneSkips = 0;
+            AvgZoneCharSkips = 0;
             AvgTotalDispatchMs = 0;
             AvgPhaseAMs = 0;
             AvgPhaseProxyMs = 0;

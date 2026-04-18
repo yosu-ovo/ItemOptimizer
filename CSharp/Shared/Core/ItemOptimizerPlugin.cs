@@ -2,7 +2,6 @@ using System;
 using System.Reflection;
 using Barotrauma;
 using Barotrauma.Items.Components;
-using Barotrauma.LuaCs.Events;
 using HarmonyLib;
 using ItemOptimizerMod.Patches;
 using ItemOptimizerMod.SignalGraph;
@@ -10,10 +9,13 @@ using Microsoft.Xna.Framework;
 
 namespace ItemOptimizerMod
 {
-    public sealed partial class ItemOptimizerPlugin : IAssemblyPlugin, IEventRoundStarted
+    public sealed partial class ItemOptimizerPlugin : IAssemblyPlugin
     {
         private const string HarmonyId = "ItemOptimizerMod";
         internal static ItemOptimizerPlugin Instance;
+
+        // Dedup guard: multiplayer may fire our Harmony postfix from both CL+SV threads.
+        private static bool _roundInitialized;
 
         internal static Harmony harmony;
 
@@ -110,6 +112,13 @@ namespace ItemOptimizerMod
             if (OptimizerConfig.EnableCharacterStagger)
                 CharacterStaggerPatch.Register(harmony);
 
+            // Character zone skip — freeze NPCs in Dormant/Unloaded zones (always registered, gated by runtime flag)
+            CharacterZoneSkipPatch.Register(harmony);
+
+            // Round lifecycle — own Harmony patches instead of LuaCs IEventRoundStarted/Ended
+            // (LuaCs event dispatch is unreliable in some versions)
+            RegisterRoundLifecyclePatches();
+
             InitializeClient();
             InitializeServer();
 
@@ -161,18 +170,83 @@ namespace ItemOptimizerMod
             LuaCsLogger.Log("[ItemOptimizer] UpdateAllTakeover enabled (OnLoadCompleted)");
         }
 
-        public void OnRoundStart()
+        // ═══ Round Lifecycle — own Harmony patches ═══
+        // LuaCs IEventRoundStarted/IEventRoundEnded dispatch is unreliable
+        // (depends on LuaCs version / event service init). Direct Harmony is bulletproof.
+
+        private static void RegisterRoundLifecyclePatches()
         {
+            // PostFix on GameSession.StartRound(LevelData, bool, SubmarineInfo, SubmarineInfo)
+            var startRound = AccessTools.Method(typeof(GameSession), nameof(GameSession.StartRound),
+                new[] { typeof(LevelData), typeof(bool), typeof(SubmarineInfo), typeof(SubmarineInfo) });
+            if (startRound != null)
+            {
+                harmony.Patch(startRound,
+                    postfix: new HarmonyMethod(AccessTools.Method(typeof(ItemOptimizerPlugin), nameof(OnRoundStartPostfix))));
+                LuaCsLogger.Log("[ItemOptimizer] Round lifecycle: StartRound postfix registered");
+            }
+            else
+            {
+                LuaCsLogger.LogError("[ItemOptimizer] Round lifecycle: GameSession.StartRound not found!");
+            }
+
+            // Prefix on GameSession.EndRound (entities still alive)
+            var endRound = AccessTools.Method(typeof(GameSession), nameof(GameSession.EndRound));
+            if (endRound != null)
+            {
+                harmony.Patch(endRound,
+                    prefix: new HarmonyMethod(AccessTools.Method(typeof(ItemOptimizerPlugin), nameof(OnRoundEndPrefix))));
+                LuaCsLogger.Log("[ItemOptimizer] Round lifecycle: EndRound prefix registered");
+            }
+            else
+            {
+                LuaCsLogger.LogError("[ItemOptimizer] Round lifecycle: GameSession.EndRound not found!");
+            }
+        }
+
+        private static void OnRoundStartPostfix()
+        {
+            DebugConsole.NewMessage($"[ItemOptimizer] OnRoundStart (initialized={_roundInitialized})", Color.Cyan);
+            if (_roundInitialized) return;
+            _roundInitialized = true;
+
+            DebugConsole.NewMessage("[ItemOptimizer] Clearing caches + initializing for new round", Color.LimeGreen);
+
+            // ── Clear all entity-ID-indexed caches (stale from previous round) ──
+            UpdateAllTakeover.ClearItemCaches();
+            MotionSensorRewrite.Reset();
+            HullCharacterTracker.Reset();
+            WaterDetectorRewrite.Reset();
+            RelayRewrite.Reset();
+            PowerTransferRewrite.Reset();
+            PowerContainerRewrite.Reset();
+            Proxy.ProxyRegistry.ClearStaleAttachments();
+
+            // ── Signal graph: recompile for new round's items ──
             if (OptimizerConfig.SignalGraphMode > 0)
             {
                 SignalGraphEvaluator.Compile();
             }
 
+            // ── NativeRuntime lifecycle ──
             World.NativeRuntimeBridge.OnRoundStart();
+        }
+
+        private static void OnRoundEndPrefix()
+        {
+            DebugConsole.NewMessage($"[ItemOptimizer] OnRoundEnd (initialized={_roundInitialized})", Color.Cyan);
+            if (!_roundInitialized) return;
+            _roundInitialized = false;
+
+            DebugConsole.NewMessage("[ItemOptimizer] Cleaning up NativeRuntime", Color.Yellow);
+
+            if (World.NativeRuntimeBridge.IsEnabled)
+                World.NativeRuntimeBridge.OnRoundEnd();
         }
 
         public void Dispose()
         {
+            _roundInitialized = false;
             DisposeClient();
             DisposeServer();
             World.NativeRuntimeBridge.OnRoundEnd();
@@ -180,6 +254,7 @@ namespace ItemOptimizerMod
             PerfProfiler.Reset();
             SpikeDetector.Reset();
             CharacterStaggerPatch.Unregister(harmony);
+            CharacterZoneSkipPatch.Unregister(harmony);
             MotionSensorRewrite.Reset();
             MotionSensorRewrite.Unregister(harmony);
             HullCharacterTracker.Reset();
@@ -314,8 +389,17 @@ namespace ItemOptimizerMod
                     OptimizerConfig.EnableWireSkip = value > 0;
                     break;
                 case "motion_rewrite":
-                    OptimizerConfig.EnableMotionSensorRewrite = value > 0;
-                    if (value > 0)
+                {
+                    bool enable = value > 0;
+                    // Validate: turning OFF may cascade-disable NativeRuntime
+                    var cascades = ToggleValidator.ValidateChange("motion_rewrite", enable);
+                    if (cascades == null) break; // blocked
+                    // Apply cascades before the actual change
+                    foreach (var (t, v) in cascades)
+                        SetStrategyValue(t, v ? 1 : 0);
+
+                    OptimizerConfig.EnableMotionSensorRewrite = enable;
+                    if (enable)
                     {
                         // Unregister old throttle patch to eliminate stacked Harmony overhead
                         harmony.Unpatch(msUpdateOriginal, msUpdatePrefix.method);
@@ -329,6 +413,7 @@ namespace ItemOptimizerMod
                             harmony.Patch(msUpdateOriginal, prefix: msUpdatePrefix);
                     }
                     break;
+                }
                 case "water_det_rewrite":
                     OptimizerConfig.EnableWaterDetectorRewrite = value > 0;
                     if (value > 0)
@@ -419,8 +504,14 @@ namespace ItemOptimizerMod
                     }
                     break;
                 case "native_runtime":
-                    OptimizerConfig.EnableNativeRuntime = value > 0;
-                    if (value > 0)
+                {
+                    bool enable = value > 0;
+                    // Validate: turning ON requires MotionSensorRewrite
+                    var cascades = ToggleValidator.ValidateChange("native_runtime", enable);
+                    if (cascades == null) break; // blocked
+
+                    OptimizerConfig.EnableNativeRuntime = enable;
+                    if (enable)
                     {
                         if (!World.NativeRuntimeBridge.IsEnabled)
                             World.NativeRuntimeBridge.OnRoundStart();
@@ -431,6 +522,7 @@ namespace ItemOptimizerMod
                             World.NativeRuntimeBridge.OnRoundEnd();
                     }
                     break;
+                }
             }
         }
 

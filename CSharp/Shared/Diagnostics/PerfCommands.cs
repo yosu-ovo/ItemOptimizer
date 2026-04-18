@@ -937,9 +937,12 @@ namespace ItemOptimizerMod
                     string a = args[0].ToLowerInvariant();
                     if (a == "on" || a == "1")
                     {
+                        if (!ToggleValidator.CanEnableNativeRuntime()) return;
                         OptimizerConfig.EnableNativeRuntime = true;
-                        if (!World.NativeRuntimeBridge.IsEnabled)
-                            World.NativeRuntimeBridge.OnRoundStart();
+                        // Always restart to pick up new round data (fixes stale zones after round restart)
+                        if (World.NativeRuntimeBridge.IsEnabled)
+                            World.NativeRuntimeBridge.OnRoundEnd();
+                        World.NativeRuntimeBridge.OnRoundStart();
                     }
                     else if (a == "off" || a == "0")
                     {
@@ -1010,6 +1013,115 @@ namespace ItemOptimizerMod
                         }
                     }
                 }
+            });
+
+            Add("iozone", "iozone [csv <path>]: List all structures with item counts, distance, zone tier.", args =>
+            {
+                // Gather player position
+                Vector2 playerPos = Character.Controlled?.WorldPosition
+                    ?? GameMain.GameScreen?.Cam?.GetPosition()
+                    ?? Vector2.Zero;
+
+                // Group items by submarine
+                var subGroups = new Dictionary<Submarine, int>();
+                int looseCount = 0;
+                foreach (var item in Item.ItemList)
+                {
+                    if (item == null || item.Removed) continue;
+                    if (item.Submarine != null)
+                    {
+                        subGroups.TryGetValue(item.Submarine, out int cnt);
+                        subGroups[item.Submarine] = cnt + 1;
+                    }
+                    else
+                    {
+                        looseCount++;
+                    }
+                }
+
+                // Build zone lookup if NativeRuntime is available
+                Dictionary<Submarine, World.SubmarineZone> subToZone = null;
+                if (World.NativeRuntimeBridge.IsEnabled && World.NativeRuntimeBridge.Runtime != null)
+                {
+                    var zones = World.NativeRuntimeBridge.Runtime.Graph.Zones;
+                    subToZone = new Dictionary<Submarine, World.SubmarineZone>(zones.Count);
+                    foreach (var z in zones)
+                    {
+                        if (z is World.SubmarineZone sz && sz.Submarine != null)
+                            subToZone[sz.Submarine] = sz;
+                    }
+                }
+
+                // Build sorted list
+                var entries = new List<(string name, string subType, int items, float dist, string tier, int components)>();
+                foreach (var kv in subGroups)
+                {
+                    var sub = kv.Key;
+                    string name = sub.Info?.Name ?? $"Sub#{sub.ID}";
+                    string subType = sub.Info?.Type.ToString() ?? "Unknown";
+                    float dist = Vector2.Distance(playerPos, sub.WorldPosition);
+                    string tier = "N/A";
+                    int components = 0;
+                    if (subToZone != null && subToZone.TryGetValue(sub, out var sz))
+                    {
+                        tier = sz.Tier.ToString();
+                        components = sz.Components.Count;
+                    }
+                    entries.Add((name, subType, kv.Value, dist, tier, components));
+                }
+                entries.Sort((a, b) => a.dist.CompareTo(b.dist));
+
+                // CSV export
+                if (args.Length >= 1 && args[0].Equals("csv", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = args.Length > 1 ? args[1] : "io_zone.csv";
+                    path = PerfProfiler.ResolvePath(path);
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine("name,type,items,distance,tier,native_components");
+                    foreach (var e in entries)
+                        sb.AppendLine($"{e.name},{e.subType},{e.items},{e.dist:F0},{e.tier},{e.components}");
+                    sb.AppendLine($"[loose],,-,{looseCount},-,N/A,0");
+                    try
+                    {
+                        string dir = System.IO.Path.GetDirectoryName(path);
+                        if (!string.IsNullOrEmpty(dir)) System.IO.Directory.CreateDirectory(dir);
+                        System.IO.File.WriteAllText(path, sb.ToString());
+                        DebugConsole.NewMessage($"[ItemOptimizer] Zone data saved to {path}", Color.LimeGreen);
+                    }
+                    catch (Exception ex)
+                    {
+                        DebugConsole.NewMessage($"[ItemOptimizer] Failed to write: {ex.Message}", Color.Red);
+                    }
+                    return;
+                }
+
+                // Console output
+                DebugConsole.NewMessage($"[ItemOptimizer] ── Zone / Structure Distribution ──", Color.Cyan);
+                int totalItems = 0;
+                foreach (var e in entries)
+                {
+                    totalItems += e.items;
+                    bool isPlayer = e.tier == "Active" || (Character.Controlled?.Submarine?.Info?.Name == e.name);
+                    string tag = isPlayer ? " [YOU]" : "";
+                    var tierColor = e.tier switch
+                    {
+                        "Active" => Color.LimeGreen,
+                        "Nearby" => Color.Yellow,
+                        "Passive" => Color.Orange,
+                        "Dormant" => Color.Gray,
+                        "Unloaded" => Color.DarkGray,
+                        _ => Color.White
+                    };
+                    DebugConsole.NewMessage(
+                        $"  {e.name} ({e.subType}): {e.items} items, dist={e.dist:F0}, tier={e.tier}, native={e.components}{tag}",
+                        tierColor);
+                }
+                DebugConsole.NewMessage($"  [loose]: {looseCount} items (no submarine)", Color.Gray);
+                DebugConsole.NewMessage(
+                    $"[ItemOptimizer] Total: {totalItems + looseCount} items in {entries.Count} structures + {looseCount} loose",
+                    Color.Cyan);
+                if (subToZone == null)
+                    DebugConsole.NewMessage("[ItemOptimizer] (NativeRuntime OFF — tier data unavailable, use 'ionative on')", Color.Yellow);
             });
 
             Add("iospatial", "iospatial: Dump hull spatial partition state for motion sensors + character positions.", args =>
@@ -1106,6 +1218,85 @@ namespace ItemOptimizerMod
                 if (sensorCount > 10)
                     DebugConsole.NewMessage($"    ... and {sensorCount - 10} more sensors", Color.Gray);
                 DebugConsole.NewMessage($"  Total sensors: {sensorCount}", Color.Cyan);
+            });
+
+            Add("ioreactor", "ioreactor [itemId]: Dump reactor state (fission, turbine, auto-control, signals).", args =>
+            {
+                Reactor reactor = null;
+                Item reactorItem = null;
+                if (args.Length > 0 && int.TryParse(args[0], out int targetId))
+                {
+                    foreach (var it in Item.ItemList)
+                    {
+                        if (it.ID == targetId) { reactorItem = it; break; }
+                    }
+                    reactor = reactorItem?.GetComponent<Reactor>();
+                }
+                else
+                {
+                    // Find first reactor
+                    foreach (var it in Item.ItemList)
+                    {
+                        var r = it.GetComponent<Reactor>();
+                        if (r != null) { reactor = r; reactorItem = it; break; }
+                    }
+                }
+                if (reactor == null || reactorItem == null)
+                {
+                    DebugConsole.NewMessage("[ItemOptimizer] No reactor found.", Color.Red);
+                    return;
+                }
+
+                DebugConsole.NewMessage($"[ItemOptimizer] Reactor ID={reactorItem.ID} \"{reactorItem.Name}\"", Color.Cyan);
+                DebugConsole.NewMessage($"  FissionRate={reactor.FissionRate:F2} TargetFissionRate={reactor.TargetFissionRate:F2}", Color.White);
+                DebugConsole.NewMessage($"  TurbineOutput={reactor.TurbineOutput:F2} TargetTurbineOutput={reactor.TargetTurbineOutput:F2}", Color.White);
+                DebugConsole.NewMessage($"  Temperature={reactor.Temperature:F2} AvailableFuel={reactor.AvailableFuel:F2}", Color.White);
+                DebugConsole.NewMessage($"  PowerOn={reactor.PowerOn} AutoTemp={reactor.AutoTemp} Load={reactor.Load:F2}", Color.White);
+                DebugConsole.NewMessage($"  CurrPowerConsumption={reactor.CurrPowerConsumption:F2}", Color.White);
+
+                // Signal control state: check connections for last received signals
+                if (reactorItem.Connections != null)
+                {
+                    foreach (var conn in reactorItem.Connections)
+                    {
+                        if (conn.Name == "set_fissionrate" || conn.Name == "set_turbineoutput" || conn.Name == "shutdown")
+                        {
+                            string lastRecv = conn.LastReceivedSignal.value ?? "(null)";
+                            DebugConsole.NewMessage($"  [{conn.Name}] LastReceived=\"{lastRecv}\" wires={conn.Wires.Count}",
+                                conn.Wires.Count > 0 ? Color.Yellow : Color.Gray);
+                        }
+                    }
+                }
+
+                // Check if item is in update loop
+                bool isActive = reactorItem.IsActive;
+                bool isAccel = SignalGraphEvaluator.IsAccelerated((ushort)reactorItem.ID);
+                bool inPriority = LuaCsSetup.Instance?.Game?.UpdatePriorityItems?.Contains(reactorItem) ?? false;
+                DebugConsole.NewMessage($"  IsActive={isActive} Accelerated={isAccel} PriorityItem={inPriority}",
+                    isAccel ? Color.Red : Color.LimeGreen);
+
+                // Check circuitbox controller if wired
+                foreach (var conn in reactorItem.Connections)
+                {
+                    if ((conn.Name == "set_fissionrate" || conn.Name == "set_turbineoutput") && conn.Wires.Count > 0)
+                    {
+                        foreach (var wire in conn.Wires)
+                        {
+                            if (wire == null) continue;
+                            for (int ci = 0; ci < 2; ci++)
+                            {
+                                var otherConn = wire.Connections[ci];
+                                if (otherConn != null && otherConn != conn && otherConn.Item != null)
+                                {
+                                    string lastSent = otherConn.LastSentSignal.value ?? "(null)";
+                                    DebugConsole.NewMessage(
+                                        $"  [{conn.Name}] ← {otherConn.Item.Name}(#{otherConn.Item.ID}) [{otherConn.Name}] LastSent=\"{lastSent}\"",
+                                        Color.Yellow);
+                                }
+                            }
+                        }
+                    }
+                }
             });
         }
 

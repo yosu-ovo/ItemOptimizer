@@ -6,6 +6,7 @@ using Barotrauma;
 using Barotrauma.Items.Components;
 using FarseerPhysics;
 using HarmonyLib;
+using ItemOptimizerMod.World;
 using Microsoft.Xna.Framework;
 
 namespace ItemOptimizerMod.Patches
@@ -328,8 +329,10 @@ namespace ItemOptimizerMod.Patches
         /// </summary>
         public static bool Prefix(MotionSensor __instance, float deltaTime)
         {
-            // NativeRuntime bypass — when managed by NativeRuntime, skip Prefix entirely
-            if (IsNativeManaged[__instance.item.ID]) return false;
+            // NativeRuntime bypass — when managed by NativeRuntime, skip Prefix entirely.
+            // NativeRuntime has its own independent tick hook (postfix on MapEntity.UpdateAll)
+            // that ensures Tick() runs even when UpdateAllTakeover is OFF.
+            if (IsNativeManaged[__instance.item.ID] && NativeRuntimeBridge.IsEnabled) return false;
 
             if (!OptimizerConfig.EnableMotionSensorRewrite)
             {
@@ -494,7 +497,13 @@ namespace ItemOptimizerMod.Patches
             float minVelSq = __instance.MinimumVelocity * __instance.MinimumVelocity;
 
             // ── Hull spatial filtering (Layer 0 + Layer 1) ──
-            if (OptimizerConfig.EnableHullSpatialIndex)
+            // HullCharacterTracker.Rebuild() is guaranteed fresh:
+            // - When iotakeover ON: dispatch loop calls Rebuild() before item dispatch
+            // - When iotakeover OFF + ionative ON: NativeRuntime postfix calls Rebuild()
+            // - When iotakeover OFF + ionative OFF: Rewrite runs from vanilla Update,
+            //   tracker may be stale — fall back to full scan
+            if (OptimizerConfig.EnableHullSpatialIndex
+                && (UpdateAllTakeover.Enabled || NativeRuntimeBridge.IsEnabled))
             {
                 ref var sc = ref _spatialCache[id];
                 if (!sc.Resolved)
@@ -670,7 +679,9 @@ namespace ItemOptimizerMod.Patches
             var targetChars = Ref_targetCharacters(sensor);
 
             // ── Hull spatial filtering ──
-            if (OptimizerConfig.EnableHullSpatialIndex)
+            // HullCharacterTracker is fresh when iotakeover OR ionative is ON.
+            if (OptimizerConfig.EnableHullSpatialIndex
+                && (UpdateAllTakeover.Enabled || NativeRuntimeBridge.IsEnabled))
             {
                 int id = sensor.item.ID;
                 ref var sc = ref _spatialCache[id];

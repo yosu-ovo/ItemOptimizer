@@ -48,6 +48,10 @@ namespace ItemOptimizerMod.Patches
         private static bool _hasProxy;
         private static bool _hasSignalGraph;
         private static bool _hasWireSkip;
+        internal static bool _hasZoneSkip;
+
+        // ── Zone-based structure skip: flat array indexed by submarine ID ──
+        internal static readonly bool[] _dormantSubFlags = new bool[65536];
 
         // ── Frame generation for active-use cache ──
         private static int _frameGeneration;
@@ -156,8 +160,10 @@ namespace ItemOptimizerMod.Patches
             Array.Clear(ThrottleCounters, 0, 65536);
             Array.Clear(HoldableCache, 0, 65536);
             Array.Clear(WireCache, 0, 65536);
+            Array.Clear(IsWireCache, 0, 65536);
             Array.Clear(ActiveUseCacheGen, 0, 65536);
             Array.Clear(ActiveUseCacheVal, 0, 65536);
+            _diagLogged = false;
         }
 
         // ────────────────────────────────────────────────
@@ -175,6 +181,32 @@ namespace ItemOptimizerMod.Patches
             _hasProxy = ProxyRegistry.HasHandlers;
             _hasSignalGraph = OptimizerConfig.SignalGraphMode > 0 && (SignalGraphEvaluator.IsCompiled || SignalGraphEvaluator.IsDirty);
             _hasWireSkip = OptimizerConfig.EnableWireSkip;
+            _hasZoneSkip = OptimizerConfig.EnableZoneSkip && World.NativeRuntimeBridge.IsEnabled;
+            if (_hasZoneSkip)
+                PrecomputeZoneFlags();
+        }
+
+        /// <summary>
+        /// Rebuild _dormantSubFlags from ZoneGraph tier data.
+        /// Called once per frame in RefreshFrameFlags. O(zones) — typically 3-10.
+        /// Pure player-distance driven — NPC presence does NOT prevent freezing.
+        /// (NPC life support will be handled by ZoneProxy in a future step.)
+        /// </summary>
+        private static void PrecomputeZoneFlags()
+        {
+            System.Array.Clear(_dormantSubFlags, 0, _dormantSubFlags.Length);
+            var rt = World.NativeRuntimeBridge.Runtime;
+            if (rt == null) return;
+
+            var zones = rt.Graph.Zones;
+            for (int i = 0; i < zones.Count; i++)
+            {
+                if (zones[i] is World.SubmarineZone sz && sz.Submarine != null
+                    && sz.Tier >= World.ZoneTier.Dormant)
+                {
+                    _dormantSubFlags[sz.Submarine.ID & 0xFFFF] = true;
+                }
+            }
         }
 
         // ════════════════════════════════════════════════
@@ -397,6 +429,14 @@ namespace ItemOptimizerMod.Patches
                     if (_hasWireSkip && IsPureWireItem(item))
                     {
                         Stats.WireSkips++;
+                        continue;
+                    }
+
+                    // Zone-based structure skip: items in Dormant/Unloaded zones skip entirely
+                    if (_hasZoneSkip && item.Submarine != null
+                        && _dormantSubFlags[item.Submarine.ID & 0xFFFF])
+                    {
+                        Stats.ZoneSkips++;
                         continue;
                     }
 
