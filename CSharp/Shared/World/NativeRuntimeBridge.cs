@@ -13,10 +13,24 @@ namespace ItemOptimizerMod.World
     /// Bridge between mod lifecycle (round start/end) and NativeRuntime.
     /// Step 3: real submarine-based zone partitioning with tier evaluation.
     /// </summary>
-    internal static class NativeRuntimeBridge
+    internal static partial class NativeRuntimeBridge
     {
         internal static NativeRuntime Runtime;
         internal static bool IsEnabled;
+
+        /// <summary>
+        /// Per-item flag: true when this item's lifecycle is fully managed by a Zone.
+        /// Dispatch loop skips these items — NativeRuntime handles their scheduling.
+        /// Replaces the old submarine-level _dormantSubFlags approach with per-item precision.
+        /// </summary>
+        internal static readonly bool[] IsZoneManaged = new bool[65536];
+
+        /// <summary>
+        /// Per-submarine zone tier, refreshed each Tick from zone tiers.
+        /// Value = (byte)ZoneTier (0=Active..4=Unloaded), default 0.
+        /// Used by dispatch loop for tier-based item LOD and by CharacterZoneSkipPatch.
+        /// </summary>
+        internal static readonly byte[] SubZoneTier = new byte[65536];
 
         private static readonly List<MotionSensorNative> _registeredSensors = new(64);
 
@@ -70,6 +84,7 @@ namespace ItemOptimizerMod.World
                 var native = new MotionSensorNative(ms, item);
                 Runtime.Register(native, targetZone);
                 _registeredSensors.Add(native);
+                IsZoneManaged[item.ID] = true;
 
                 // Track per-zone count for diagnostics
                 string zoneName = targetZone is SubmarineZone szd
@@ -80,6 +95,9 @@ namespace ItemOptimizerMod.World
             }
 
             IsEnabled = true;
+
+            // Register client-only components (LightNativeComponent etc.)
+            RegisterClientComponents();
 
             // Register independent tick hook (ensures NativeRuntime ticks even when iotakeover is OFF)
             if (ItemOptimizerPlugin.harmony != null)
@@ -150,14 +168,29 @@ namespace ItemOptimizerMod.World
             IsEnabled = false;
             LastStartupInfo = null;
 
-            // Clear dormant flags so no items are frozen after runtime stops
-            System.Array.Clear(UpdateAllTakeover._dormantSubFlags, 0,
-                UpdateAllTakeover._dormantSubFlags.Length);
+            System.Array.Clear(IsZoneManaged, 0, 65536);
+            System.Array.Clear(SubZoneTier, 0, 65536);
         }
 
         internal static void Tick(float deltaTime, Camera cam)
         {
             Runtime?.Tick(deltaTime, cam);
+            RefreshSubZoneTiers();
+        }
+
+        private static void RefreshSubZoneTiers()
+        {
+            System.Array.Clear(SubZoneTier, 0, SubZoneTier.Length);
+            var graph = Runtime?.Graph;
+            if (graph == null) return;
+            for (int i = 0; i < graph.Zones.Count; i++)
+            {
+                if (graph.Zones[i] is SubmarineZone sz
+                    && sz.Submarine != null)
+                {
+                    SubZoneTier[sz.Submarine.ID & 0xFFFF] = (byte)sz.Tier;
+                }
+            }
         }
 
         // ═══ Independent Tick Hook (方案C) ═══
@@ -193,6 +226,9 @@ namespace ItemOptimizerMod.World
                     AccessTools.Method(typeof(NativeRuntimeBridge), nameof(PostUpdateAllTick)));
             _hasTickHook = false;
         }
+
+        /// <summary>Client-only registration hook for visual NativeComponents.</summary>
+        static partial void RegisterClientComponents();
 
         /// <summary>
         /// Postfix on MapEntity.UpdateAll. Provides independent tick for NativeRuntime

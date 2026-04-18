@@ -1,15 +1,15 @@
 using Barotrauma;
 using HarmonyLib;
+using ItemOptimizerMod.World;
 
 namespace ItemOptimizerMod.Patches
 {
     /// <summary>
     /// Skips Character.Update for characters in Dormant/Unloaded zones.
     /// Characters are fully suspended — no health, oxygen, status effects, AI, or physics.
-    /// This matches the item-level zone skip in UpdateAllTakeover: the entire structure freezes.
     ///
-    /// Reuses UpdateAllTakeover._dormantSubFlags[] (same flat array, same PrecomputeZoneFlags).
-    /// Player characters are never skipped.
+    /// Uses NativeRuntimeBridge.SubZoneTier[] (per-submarine zone tier,
+    /// refreshed each tick from zone tiers). Player characters are never skipped.
     /// </summary>
     static class CharacterZoneSkipPatch
     {
@@ -38,7 +38,7 @@ namespace ItemOptimizerMod.Patches
 
         static bool Prefix(Character __instance)
         {
-            if (!UpdateAllTakeover._hasZoneSkip) return true;
+            if (!UpdateAllTakeover._hasZoneManaged) return true;
 
             // Never freeze player characters
             if (__instance.IsPlayer) return true;
@@ -46,7 +46,7 @@ namespace ItemOptimizerMod.Patches
             var sub = __instance.Submarine;
             if (sub == null) return true;
 
-            if (UpdateAllTakeover._dormantSubFlags[sub.ID & 0xFFFF])
+            if (NativeRuntimeBridge.SubZoneTier[sub.ID & 0xFFFF] >= (byte)ZoneTier.Dormant)
             {
                 Stats.ZoneCharSkips++;
                 return false;

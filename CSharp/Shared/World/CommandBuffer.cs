@@ -75,22 +75,24 @@ namespace ItemOptimizerMod.World
 
         // ── Merge helpers ──
 
+        // Reusable merge dictionaries — one per value type to avoid boxing.
+        // Safe because ApplyAll runs on main thread, single-threaded.
+        [ThreadStatic]
+        private static Dictionary<ulong, HullWaterCmd> _mergeHullWater;
+        [ThreadStatic]
+        private static Dictionary<ulong, PhysicsForceCmd> _mergePhysicsForce;
+
         /// <summary>
         /// Merge commands with the same MergeKey, then apply.
-        /// Uses a temporary dictionary — acceptable because this runs once per zone per frame.
+        /// Uses a pooled dictionary to avoid per-frame allocation.
         /// </summary>
-        private static void ApplyMerged<T>(List<T> commands) where T : struct, ICommand, IMergeableCommand<T>
+        private static void ApplyMerged(List<HullWaterCmd> commands)
         {
             if (commands.Count == 0) return;
+            if (commands.Count == 1) { commands[0].Apply(); return; }
 
-            if (commands.Count == 1)
-            {
-                commands[0].Apply();
-                return;
-            }
-
-            // Merge by key
-            var merged = new Dictionary<ulong, T>(commands.Count);
+            var merged = _mergeHullWater ??= new Dictionary<ulong, HullWaterCmd>(16);
+            merged.Clear();
             for (int i = 0; i < commands.Count; i++)
             {
                 var cmd = commands[i];
@@ -100,9 +102,26 @@ namespace ItemOptimizerMod.World
                 else
                     merged[key] = cmd;
             }
+            foreach (var cmd in merged.Values) cmd.Apply();
+        }
 
-            foreach (var cmd in merged.Values)
-                cmd.Apply();
+        private static void ApplyMerged(List<PhysicsForceCmd> commands)
+        {
+            if (commands.Count == 0) return;
+            if (commands.Count == 1) { commands[0].Apply(); return; }
+
+            var merged = _mergePhysicsForce ??= new Dictionary<ulong, PhysicsForceCmd>(16);
+            merged.Clear();
+            for (int i = 0; i < commands.Count; i++)
+            {
+                var cmd = commands[i];
+                var key = cmd.MergeKey;
+                if (merged.TryGetValue(key, out var existing))
+                    merged[key] = existing.Merge(cmd);
+                else
+                    merged[key] = cmd;
+            }
+            foreach (var cmd in merged.Values) cmd.Apply();
         }
     }
 }

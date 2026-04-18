@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using Barotrauma;
 using HarmonyLib;
+using ItemOptimizerMod.World;
 using Microsoft.Xna.Framework;
 
 namespace ItemOptimizerMod.Patches
@@ -47,9 +48,8 @@ namespace ItemOptimizerMod.Patches
             var list = _interactablesField.GetValue(null) as List<Item>;
             if (list == null || list.Count == 0) return;
 
-            // Remove proxy items — they are engine-controlled, not player-interactable
-            list.RemoveAll(item =>
-                item.Prefab != null && Proxy.ProxyRegistry.IsProxy(item.Prefab.Identifier));
+            // Remove zone-managed items — they are engine-controlled, not player-interactable
+            list.RemoveAll(item => NativeRuntimeBridge.IsZoneManaged[item.ID]);
 
             int max = OptimizerConfig.InteractionLabelMaxCount;
             if (list.Count <= max) return;

@@ -48,10 +48,7 @@ namespace ItemOptimizerMod.Patches
         private static bool _hasProxy;
         private static bool _hasSignalGraph;
         private static bool _hasWireSkip;
-        internal static bool _hasZoneSkip;
-
-        // ── Zone-based structure skip: flat array indexed by submarine ID ──
-        internal static readonly bool[] _dormantSubFlags = new bool[65536];
+        internal static bool _hasZoneManaged;
 
         // ── Frame generation for active-use cache ──
         private static int _frameGeneration;
@@ -67,7 +64,9 @@ namespace ItemOptimizerMod.Patches
 
         // ── Freeze/throttle state — flat arrays indexed by item.ID (ushort 0–65535) ──
         // Replaces ConditionalWeakTable for O(1) direct-index access with zero locking/hashing.
-        private static readonly int[] ThrottleCounters = new int[65536];
+        private static readonly int[] ThrottleCounters = new int[65536];      // GroundItem
+        private static readonly int[] RuleThrottleCounters = new int[65536];  // Per-item rules
+        private static readonly int[] ModOptCounters = new int[65536];        // Mod optimization
         private static readonly sbyte[] HoldableCache = new sbyte[65536];   // 0=unknown, 1=yes, -1=no
         private static readonly sbyte[] WireCache = new sbyte[65536];       // 0=unknown, 1=has wires, -1=no wires
         private static readonly sbyte[] IsWireCache = new sbyte[65536];    // 0=unknown, 1=pure wire item, -1=not wire
@@ -158,6 +157,8 @@ namespace ItemOptimizerMod.Patches
         internal static void ClearItemCaches()
         {
             Array.Clear(ThrottleCounters, 0, 65536);
+            Array.Clear(RuleThrottleCounters, 0, 65536);
+            Array.Clear(ModOptCounters, 0, 65536);
             Array.Clear(HoldableCache, 0, 65536);
             Array.Clear(WireCache, 0, 65536);
             Array.Clear(IsWireCache, 0, 65536);
@@ -181,32 +182,7 @@ namespace ItemOptimizerMod.Patches
             _hasProxy = ProxyRegistry.HasHandlers;
             _hasSignalGraph = OptimizerConfig.SignalGraphMode > 0 && (SignalGraphEvaluator.IsCompiled || SignalGraphEvaluator.IsDirty);
             _hasWireSkip = OptimizerConfig.EnableWireSkip;
-            _hasZoneSkip = OptimizerConfig.EnableZoneSkip && World.NativeRuntimeBridge.IsEnabled;
-            if (_hasZoneSkip)
-                PrecomputeZoneFlags();
-        }
-
-        /// <summary>
-        /// Rebuild _dormantSubFlags from ZoneGraph tier data.
-        /// Called once per frame in RefreshFrameFlags. O(zones) — typically 3-10.
-        /// Pure player-distance driven — NPC presence does NOT prevent freezing.
-        /// (NPC life support will be handled by ZoneProxy in a future step.)
-        /// </summary>
-        private static void PrecomputeZoneFlags()
-        {
-            System.Array.Clear(_dormantSubFlags, 0, _dormantSubFlags.Length);
-            var rt = World.NativeRuntimeBridge.Runtime;
-            if (rt == null) return;
-
-            var zones = rt.Graph.Zones;
-            for (int i = 0; i < zones.Count; i++)
-            {
-                if (zones[i] is World.SubmarineZone sz && sz.Submarine != null
-                    && sz.Tier >= World.ZoneTier.Dormant)
-                {
-                    _dormantSubFlags[sz.Submarine.ID & 0xFFFF] = true;
-                }
-            }
+            _hasZoneManaged = World.NativeRuntimeBridge.IsEnabled;
         }
 
         // ════════════════════════════════════════════════
@@ -309,18 +285,8 @@ namespace ItemOptimizerMod.Patches
                         Powered.UpdatePower(poweredDt);
                 }
 
-                // ═══ Phase Proxy: Proxy item batch compute + sync ═══
-                Stats.PhaseAMs = (float)((Stopwatch.GetTimestamp() - phaseAStart) * _ticksToMs);
-                long phaseProxyStart = Stopwatch.GetTimestamp();
-                if (isMapFrame && ProxyRegistry.HasHandlers)
-                {
-                    ProxyRegistry.Tick(scaledDt);
-                    Stats.ProxyBatchComputeMs = (float)(ProxyRegistry.LastBatchComputeTicks * _ticksToMs);
-                    Stats.ProxySyncBackMs = (float)(ProxyRegistry.LastSyncBackTicks * _ticksToMs);
-                }
-
                 // ═══ Phase B: Items ═══
-                Stats.PhaseProxyMs = (float)((Stopwatch.GetTimestamp() - phaseProxyStart) * _ticksToMs);
+                Stats.PhaseAMs = (float)((Stopwatch.GetTimestamp() - phaseAStart) * _ticksToMs);
                 long phaseBStart = Stopwatch.GetTimestamp();
                 Item.UpdatePendingConditionUpdates(deltaTime);  // every frame, raw dt
 
@@ -330,7 +296,11 @@ namespace ItemOptimizerMod.Patches
 
                 // NativeRuntime: tick registered NativeComponents (sensors etc.)
                 if (isMapFrame && World.NativeRuntimeBridge.IsEnabled)
+                {
+                    long nativeRtStart = Stopwatch.GetTimestamp();
                     World.NativeRuntimeBridge.Tick(scaledDt, cam);
+                    Stats.PhaseBNativeRtMs = (float)((Stopwatch.GetTimestamp() - nativeRtStart) * _ticksToMs);
+                }
 
                 if (isMapFrame)
                     DispatchItemUpdates(scaledDt, cam);
@@ -432,12 +402,28 @@ namespace ItemOptimizerMod.Patches
                         continue;
                     }
 
-                    // Zone-based structure skip: items in Dormant/Unloaded zones skip entirely
-                    if (_hasZoneSkip && item.Submarine != null
-                        && _dormantSubFlags[item.Submarine.ID & 0xFFFF])
+                    // Zone-managed skip: items whose lifecycle is fully controlled by NativeRuntime
+                    if (_hasZoneManaged && World.NativeRuntimeBridge.IsZoneManaged[item.ID])
                     {
                         Stats.ZoneSkips++;
                         continue;
+                    }
+
+                    // Zone tier-based LOD: skip/throttle items on distant submarines
+                    if (_hasZoneManaged && item.Submarine != null)
+                    {
+                        byte tier = World.NativeRuntimeBridge.SubZoneTier[item.Submarine.ID & 0xFFFF];
+                        if (tier >= (byte)World.ZoneTier.Dormant)
+                        {
+                            Stats.ZoneSkips++;
+                            continue;
+                        }
+                        if (tier >= (byte)World.ZoneTier.Passive
+                            && ((_frameGeneration + (uint)item.ID) & 1) != 0)
+                        {
+                            Stats.ZonePassiveSkips++;
+                            continue;
+                        }
                     }
 
                     // Proxy items: guarded by frame flag (skips Dict lookup when no handlers)
@@ -456,8 +442,12 @@ namespace ItemOptimizerMod.Patches
                                 proxyPhysicsTicks += Stopwatch.GetTimestamp() - pStart;
                                 continue;
                             case ProxySkipLevel.StatusEffectOnly:
-                                break; // fall through to normal dispatch
+                                // Fall through to normal dispatch — add to _mainItems
+                                break;
                         }
+                        // StatusEffectOnly: skip throttle checks, go straight to dispatch
+                        _mainItems.Add(item);
+                        continue;
                     }
 
                     // Strategy 2: Ground Item Throttle
@@ -596,8 +586,8 @@ namespace ItemOptimizerMod.Patches
                     if (rule.Action == ItemRuleAction.Throttle)
                     {
                         int id2 = item.ID;
-                        ThrottleCounters[id2]++;
-                        if (ThrottleCounters[id2] % rule.SkipFrames != 0)
+                        RuleThrottleCounters[id2]++;
+                        if (RuleThrottleCounters[id2] % rule.SkipFrames != 0)
                         {
                             Stats.ItemRuleSkips++;
                             return true;
@@ -617,8 +607,8 @@ namespace ItemOptimizerMod.Patches
                 if (IsModOptEligibleCached(item))
                 {
                     int id3 = item.ID;
-                    ThrottleCounters[id3]++;
-                    if (ThrottleCounters[id3] % skipFrames != 0)
+                    ModOptCounters[id3]++;
+                    if (ModOptCounters[id3] % skipFrames != 0)
                     {
                         Stats.ModOptSkips++;
                         return true;
@@ -691,14 +681,14 @@ namespace ItemOptimizerMod.Patches
 
             // A "pure wire" item has Wire as its only meaningful component.
             // Wire + ConnectionPanel + ItemContainer + Holdable are all inert when connected.
+            // Use 'is' type checks instead of GetType().Name to avoid string allocations.
             bool hasWire = false;
             bool hasOtherActive = false;
             foreach (var ic in item.Components)
             {
-                var typeName = ic.GetType().Name;
-                if (typeName == "Wire")
+                if (ic is Wire)
                     hasWire = true;
-                else if (typeName != "ConnectionPanel" && typeName != "ItemContainer" && typeName != "Holdable")
+                else if (ic is not ConnectionPanel && ic is not ItemContainer && ic is not Holdable)
                     hasOtherActive = true;
             }
 

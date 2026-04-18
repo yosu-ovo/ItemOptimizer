@@ -25,6 +25,10 @@ namespace ItemOptimizerMod.Patches
 
         private static readonly HashSet<Identifier> EmptySet = new();
 
+        // Pool of reusable HashSets to avoid per-frame GC pressure.
+        // On frame start, all cache entries are returned to the pool instead of discarded.
+        private static readonly List<HashSet<Identifier>> _pool = new();
+
         // When true, the cache is fully populated for this frame — any target not in _cache
         // has no active status tags. This enables lock-free reads during parallel dispatch.
         private static bool _allBuilt;
@@ -38,6 +42,12 @@ namespace ItemOptimizerMod.Patches
         /// </summary>
         internal static void OnNewFrame()
         {
+            // Return all HashSets to the pool instead of discarding — avoids GC pressure
+            foreach (var kvp in _cache)
+            {
+                kvp.Value.Clear();
+                _pool.Add(kvp.Value);
+            }
             _cache.Clear();
             _allBuilt = false;
         }
@@ -50,7 +60,7 @@ namespace ItemOptimizerMod.Patches
         internal static void PreBuildAll()
         {
             if (!OptimizerConfig.EnableHasStatusTagCache) return;
-            _cache.Clear();
+            // OnNewFrame() already cleared and pooled — no need to clear again
 
             foreach (var durationEffect in StatusEffect.DurationList)
             {
@@ -60,7 +70,7 @@ namespace ItemOptimizerMod.Patches
                 {
                     if (!_cache.TryGetValue(target, out var tags))
                     {
-                        tags = new HashSet<Identifier>();
+                        tags = RentFromPool();
                         _cache[target] = tags;
                     }
                     foreach (var tag in effectTags)
@@ -76,7 +86,7 @@ namespace ItemOptimizerMod.Patches
                 {
                     if (!_cache.TryGetValue(target, out var tags))
                     {
-                        tags = new HashSet<Identifier>();
+                        tags = RentFromPool();
                         _cache[target] = tags;
                     }
                     foreach (var tag in effectTags)
@@ -85,6 +95,18 @@ namespace ItemOptimizerMod.Patches
             }
 
             _allBuilt = true;
+        }
+
+        private static HashSet<Identifier> RentFromPool()
+        {
+            int count = _pool.Count;
+            if (count > 0)
+            {
+                var set = _pool[count - 1];
+                _pool.RemoveAt(count - 1);
+                return set;
+            }
+            return new HashSet<Identifier>();
         }
 
         /// <summary>
@@ -181,7 +203,7 @@ namespace ItemOptimizerMod.Patches
             if (_allBuilt)
                 return EmptySet;
 
-            var tags = new HashSet<Identifier>();
+            var tags = RentFromPool();
 
             // Scan DurationList — same logic as vanilla PropertyConditional.cs:460-468
             foreach (var durationEffect in StatusEffect.DurationList)
@@ -213,6 +235,11 @@ namespace ItemOptimizerMod.Patches
 
         internal static void ClearCache()
         {
+            foreach (var kvp in _cache)
+            {
+                kvp.Value.Clear();
+                _pool.Add(kvp.Value);
+            }
             _cache.Clear();
             _allBuilt = false;
         }

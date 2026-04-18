@@ -20,25 +20,11 @@ namespace ItemOptimizerMod
         internal static Harmony harmony;
 
         // Cached method references for manual patching
-        private static MethodInfo ciUpdateOriginal;
-        private static MethodInfo msUpdateOriginal;
-        private static MethodInfo wearableUpdateOriginal;
-        private static MethodInfo wdUpdateOriginal;
-        private static MethodInfo doorUpdateOriginal;
         private static MethodInfo hasStatusTagOriginal;
-        private static MethodInfo afflictionApplyOriginal;
         private static MethodInfo btUpdateOriginal;
         private static MethodInfo pumpUpdateOriginal;
 
-        private static HarmonyMethod ciUpdatePrefix;
-        private static HarmonyMethod msUpdatePrefix;
-        private static HarmonyMethod wearableUpdatePrefix;
-        private static HarmonyMethod wdUpdatePrefix;
-        private static HarmonyMethod wdUpdatePostfix;
-        private static HarmonyMethod doorUpdatePrefix;
-        private static HarmonyMethod doorUpdatePostfix;
         private static HarmonyMethod hasStatusTagTranspiler;
-        private static HarmonyMethod afflictionApplyPrefix;
         private static HarmonyMethod btUpdatePrefix;
         private static HarmonyMethod pumpUpdateTranspiler;
         private static MethodInfo itemUpdateOriginal;
@@ -65,6 +51,8 @@ namespace ItemOptimizerMod
             {
                 LuaCsLogger.LogError($"[ItemOptimizer] Config load failed, using defaults: {e.Message}");
             }
+
+            Localization.Init();
 
             try
             {
@@ -125,14 +113,7 @@ namespace ItemOptimizerMod
             LuaCsLogger.Log($"[ItemOptimizer] Initialized. " +
                 $"ColdStorage={OptimizerConfig.EnableColdStorageSkip}, " +
                 $"GroundItem={OptimizerConfig.EnableGroundItemThrottle}(skip={OptimizerConfig.GroundItemSkipFrames}), " +
-                $"CI={OptimizerConfig.EnableCustomInterfaceThrottle}, " +
-                $"Motion={OptimizerConfig.EnableMotionSensorThrottle}(skip={OptimizerConfig.MotionSensorSkipFrames}), " +
-                $"Wearable={OptimizerConfig.EnableWearableThrottle}(skip={OptimizerConfig.WearableSkipFrames}), " +
-                $"WaterDet={OptimizerConfig.EnableWaterDetectorThrottle}(skip={OptimizerConfig.WaterDetectorSkipFrames}), " +
-                $"Door={OptimizerConfig.EnableDoorThrottle}(skip={OptimizerConfig.DoorSkipFrames}), " +
                 $"HasStatusTagCache={OptimizerConfig.EnableHasStatusTagCache}, " +
-                $"StatusHUD={OptimizerConfig.EnableStatusHUDThrottle}, " +
-                $"AfflictionDedup={OptimizerConfig.EnableAfflictionDedup}, " +
                 $"AnimLOD={OptimizerConfig.EnableAnimLOD}, " +
                 $"CharStagger={OptimizerConfig.EnableCharacterStagger}(groups={OptimizerConfig.CharacterStaggerGroups}), " +
                 $"LadderFix={OptimizerConfig.EnableLadderFix}, " +
@@ -278,23 +259,9 @@ namespace ItemOptimizerMod
 
         private static void CacheMethodReferences()
         {
-            ciUpdateOriginal = AccessTools.Method(typeof(CustomInterface), nameof(CustomInterface.Update));
-            msUpdateOriginal = AccessTools.Method(typeof(MotionSensor), nameof(MotionSensor.Update));
-            wearableUpdateOriginal = AccessTools.Method(typeof(Wearable), nameof(Wearable.Update));
-            wdUpdateOriginal = AccessTools.Method(typeof(WaterDetector), nameof(WaterDetector.Update));
-            doorUpdateOriginal = AccessTools.Method(typeof(Door), nameof(Door.Update));
             hasStatusTagOriginal = AccessTools.Method(typeof(PropertyConditional), nameof(PropertyConditional.Matches));
-            afflictionApplyOriginal = AccessTools.Method(typeof(CharacterHealth), nameof(CharacterHealth.ApplyAffliction));
 
-            ciUpdatePrefix = new HarmonyMethod(AccessTools.Method(typeof(CustomInterfacePatch), nameof(CustomInterfacePatch.Prefix)));
-            msUpdatePrefix = new HarmonyMethod(AccessTools.Method(typeof(MotionSensorPatch), nameof(MotionSensorPatch.Prefix)));
-            wearableUpdatePrefix = new HarmonyMethod(AccessTools.Method(typeof(WearablePatch), nameof(WearablePatch.Prefix)));
-            wdUpdatePrefix = new HarmonyMethod(AccessTools.Method(typeof(WaterDetectorPatch), nameof(WaterDetectorPatch.Prefix)));
-            wdUpdatePostfix = new HarmonyMethod(AccessTools.Method(typeof(WaterDetectorPatch), nameof(WaterDetectorPatch.Postfix)));
-            doorUpdatePrefix = new HarmonyMethod(AccessTools.Method(typeof(DoorPatch), nameof(DoorPatch.Prefix)));
-            doorUpdatePostfix = new HarmonyMethod(AccessTools.Method(typeof(DoorPatch), nameof(DoorPatch.Postfix)));
             hasStatusTagTranspiler = new HarmonyMethod(AccessTools.Method(typeof(HasStatusTagCachePatch), nameof(HasStatusTagCachePatch.Transpiler)));
-            afflictionApplyPrefix = new HarmonyMethod(AccessTools.Method(typeof(AfflictionDedupPatch), nameof(AfflictionDedupPatch.Prefix)));
 
             btUpdateOriginal = AccessTools.Method(typeof(ButtonTerminal), nameof(ButtonTerminal.Update));
             btUpdatePrefix = new HarmonyMethod(AccessTools.Method(typeof(ButtonTerminalPatch), nameof(ButtonTerminalPatch.Prefix)));
@@ -309,27 +276,10 @@ namespace ItemOptimizerMod
 
         private static void ApplyPatches()
         {
-            // Item-level freeze/throttle is now handled by UpdateAllTakeover directly.
-            // Only component-level patches remain as Harmony hooks.
-            if (OptimizerConfig.EnableCustomInterfaceThrottle)
-                harmony.Patch(ciUpdateOriginal, prefix: ciUpdatePrefix);
-            // Old MotionSensor/WaterDetector throttle patches are superseded by rewrites.
-            // Only register old patches if rewrites are disabled — avoids stacking
-            // multiple Harmony prefixes on the same method (dispatch overhead).
-            if (OptimizerConfig.EnableMotionSensorThrottle && !OptimizerConfig.EnableMotionSensorRewrite)
-                harmony.Patch(msUpdateOriginal, prefix: msUpdatePrefix);
-            if (OptimizerConfig.EnableWearableThrottle)
-                harmony.Patch(wearableUpdateOriginal, prefix: wearableUpdatePrefix);
-            if (OptimizerConfig.EnableWaterDetectorThrottle && !OptimizerConfig.EnableWaterDetectorRewrite)
-                harmony.Patch(wdUpdateOriginal, prefix: wdUpdatePrefix, postfix: wdUpdatePostfix);
-            if (OptimizerConfig.EnableDoorThrottle)
-                harmony.Patch(doorUpdateOriginal, prefix: doorUpdatePrefix, postfix: doorUpdatePostfix);
             // HasStatusTagCache uses a transpiler (always applied — checks config flag at runtime).
             // This avoids per-call Harmony dispatch overhead for non-HasStatusTag Matches calls.
             if (hasStatusTagOriginal != null)
                 harmony.Patch(hasStatusTagOriginal, transpiler: hasStatusTagTranspiler);
-            if (OptimizerConfig.EnableAfflictionDedup)
-                harmony.Patch(afflictionApplyOriginal, prefix: afflictionApplyPrefix);
             if (OptimizerConfig.EnableButtonTerminalOpt && btUpdateOriginal != null)
                 harmony.Patch(btUpdateOriginal, prefix: btUpdatePrefix);
             if (OptimizerConfig.EnablePumpOpt && pumpUpdateOriginal != null)
@@ -357,33 +307,9 @@ namespace ItemOptimizerMod
                 case "ground_item":
                     OptimizerConfig.EnableGroundItemThrottle = value > 0;
                     break;
-                case "ci_throttle":
-                    OptimizerConfig.EnableCustomInterfaceThrottle = value > 0;
-                    TogglePatch(ciUpdateOriginal, ciUpdatePrefix, value > 0);
-                    break;
-                case "motion":
-                    OptimizerConfig.EnableMotionSensorThrottle = value > 0;
-                    TogglePatch(msUpdateOriginal, msUpdatePrefix, value > 0);
-                    break;
-                case "wearable":
-                    OptimizerConfig.EnableWearableThrottle = value > 0;
-                    TogglePatch(wearableUpdateOriginal, wearableUpdatePrefix, value > 0);
-                    break;
-                case "water_detector":
-                    OptimizerConfig.EnableWaterDetectorThrottle = value > 0;
-                    TogglePatchWithPostfix(wdUpdateOriginal, wdUpdatePrefix, wdUpdatePostfix, value > 0);
-                    break;
-                case "door":
-                    OptimizerConfig.EnableDoorThrottle = value > 0;
-                    TogglePatchWithPostfix(doorUpdateOriginal, doorUpdatePrefix, doorUpdatePostfix, value > 0);
-                    break;
                 case "has_status_tag_cache":
                     OptimizerConfig.EnableHasStatusTagCache = value > 0;
                     if (value == 0) HasStatusTagCachePatch.ClearCache();
-                    break;
-                case "affliction_dedup":
-                    OptimizerConfig.EnableAfflictionDedup = value > 0;
-                    TogglePatch(afflictionApplyOriginal, afflictionApplyPrefix, value > 0);
                     break;
                 case "wire_skip":
                     OptimizerConfig.EnableWireSkip = value > 0;
@@ -400,36 +326,17 @@ namespace ItemOptimizerMod
 
                     OptimizerConfig.EnableMotionSensorRewrite = enable;
                     if (enable)
-                    {
-                        // Unregister old throttle patch to eliminate stacked Harmony overhead
-                        harmony.Unpatch(msUpdateOriginal, msUpdatePrefix.method);
                         MotionSensorRewrite.Register(harmony);
-                    }
                     else
-                    {
                         MotionSensorRewrite.Unregister(harmony);
-                        // Re-register old throttle patch as fallback
-                        if (OptimizerConfig.EnableMotionSensorThrottle)
-                            harmony.Patch(msUpdateOriginal, prefix: msUpdatePrefix);
-                    }
                     break;
                 }
                 case "water_det_rewrite":
                     OptimizerConfig.EnableWaterDetectorRewrite = value > 0;
                     if (value > 0)
-                    {
-                        // Unregister old throttle patch + SignalOpt to eliminate stacked Harmony overhead
-                        harmony.Unpatch(wdUpdateOriginal, wdUpdatePrefix.method);
-                        harmony.Unpatch(wdUpdateOriginal, wdUpdatePostfix.method);
                         WaterDetectorRewrite.Register(harmony);
-                    }
                     else
-                    {
                         WaterDetectorRewrite.Unregister(harmony);
-                        // Re-register old patches as fallback
-                        if (OptimizerConfig.EnableWaterDetectorThrottle)
-                            harmony.Patch(wdUpdateOriginal, prefix: wdUpdatePrefix, postfix: wdUpdatePostfix);
-                    }
                     break;
                 case "anim_lod":
                     OptimizerConfig.EnableAnimLOD = value > 0;
@@ -468,18 +375,9 @@ namespace ItemOptimizerMod
                 case "relay_rewrite":
                     OptimizerConfig.EnableRelayRewrite = value > 0;
                     if (value > 0)
-                    {
-                        // Unregister old RelayOpt (Client-only) to eliminate stacked Harmony overhead
-                        UnregisterRelayOpt();
                         RelayRewrite.Register(harmony);
-                    }
                     else
-                    {
                         RelayRewrite.Unregister(harmony);
-                        // Re-register old RelayOpt as fallback (Client-only)
-                        if (OptimizerConfig.EnableRelayOpt)
-                            RegisterRelayOpt();
-                    }
                     break;
                 case "power_transfer_rewrite":
                     OptimizerConfig.EnablePowerTransferRewrite = value > 0;
@@ -527,27 +425,6 @@ namespace ItemOptimizerMod
         }
 
 
-        private static void TogglePatch(MethodInfo original, HarmonyMethod prefix, bool enable)
-        {
-            if (enable)
-                harmony.Patch(original, prefix: prefix);
-            else
-                harmony.Unpatch(original, prefix.method);
-        }
-
-        private static void TogglePatchWithPostfix(MethodInfo original, HarmonyMethod prefix, HarmonyMethod postfix, bool enable)
-        {
-            if (enable)
-            {
-                harmony.Patch(original, prefix: prefix, postfix: postfix);
-            }
-            else
-            {
-                harmony.Unpatch(original, prefix.method);
-                harmony.Unpatch(original, postfix.method);
-            }
-        }
-
         /// <summary>
         /// Toggle ServerOptimizer via reflection — avoids referencing Server-only type from Shared code.
         /// </summary>
@@ -560,30 +437,5 @@ namespace ItemOptimizerMod
             method?.Invoke(null, new object[] { harmony });
         }
 
-        /// <summary>
-        /// Unregister old RelayOpt (Client-only) via reflection — avoids referencing Client-only type from Shared code.
-        /// </summary>
-        private static void UnregisterRelayOpt()
-        {
-            var relayOriginal = AccessTools.Method(typeof(RelayComponent), "Update",
-                new[] { typeof(float), typeof(Camera) });
-            if (relayOriginal == null) return;
-            var relayOptType = Type.GetType("ItemOptimizerMod.Patches.SignalOptPatches+RelayOpt");
-            if (relayOptType == null) return; // Not on client build
-            var prefixMethod = AccessTools.Method(relayOptType, "Prefix");
-            if (prefixMethod != null)
-                harmony.Unpatch(relayOriginal, prefixMethod);
-        }
-
-        /// <summary>
-        /// Re-register old RelayOpt (Client-only) via reflection — fallback when relay rewrite is disabled.
-        /// </summary>
-        private static void RegisterRelayOpt()
-        {
-            var relayOptType = Type.GetType("ItemOptimizerMod.Patches.SignalOptPatches+RelayOpt");
-            if (relayOptType == null) return; // Not on client build
-            var registerMethod = AccessTools.Method(relayOptType, "Register");
-            registerMethod?.Invoke(null, new object[] { harmony });
-        }
     }
 }

@@ -43,21 +43,14 @@ namespace ItemOptimizerMod
         public static bool EnableColdStorageSkip = true;
         public static bool EnableGroundItemThrottle = true;
         public static int GroundItemSkipFrames = 3;
-        public static bool EnableCustomInterfaceThrottle = true;
-        public static bool EnableMotionSensorThrottle = true;
-        public static bool EnableWearableThrottle = true;
-        public static bool EnableWaterDetectorThrottle = true;
-        public static bool EnableDoorThrottle = false; // race condition: ReceiveSignal can change isOpen while Update is skipped
-        public static bool EnableMotionSensorRewrite = true;   // Replaces MotionSensorThrottle + MotionSensorOpt
-        public static bool EnableWaterDetectorRewrite = true;  // Replaces WaterDetectorThrottle + WaterDetectorOpt
-        public static bool EnableRelayRewrite = true;           // Replaces RelayOpt
-        public static bool EnablePowerTransferRewrite = true;   // JunctionBox etc.
-        public static bool EnablePowerContainerRewrite = true;  // Battery/Supercapacitor
+        public static bool EnableMotionSensorRewrite = true;
+        public static bool EnableWaterDetectorRewrite = true;
+        public static bool EnableRelayRewrite = true;
+        public static bool EnablePowerTransferRewrite = true;
+        public static bool EnablePowerContainerRewrite = true;
         public static bool EnableWireSkip = true;
         public static bool EnableHasStatusTagCache = true;
         public static bool EnableHullSpatialIndex = true;   // Hull-based spatial pre-filtering for MotionSensor
-        public static bool EnableStatusHUDThrottle = true;
-        public static bool EnableAfflictionDedup = true;
 
         // ── Character optimization ──
         public static bool EnableAnimLOD = true;
@@ -67,11 +60,7 @@ namespace ItemOptimizerMod
         public static bool EnablePlatformFix = true;        // fix IgnorePlatforms desync (client-only)
 
         public static int MotionSensorSkipFrames = 9;
-        public static int WearableSkipFrames = 3;
         public static int WaterDetectorSkipFrames = 9;
-        public static int DoorSkipFrames = 2;
-        public static float StatusHUDScanInterval = 1.5f;
-        public static int StatusHUDDrawSkipFrames = 3;
 
         // Proxy item system (batch compute + sync architecture)
         public static bool EnableProxySystem = true;
@@ -79,9 +68,6 @@ namespace ItemOptimizerMod
         // ── Client optimization ──
         public static bool EnableInteractionLabelOpt = true;
         public static int InteractionLabelMaxCount = 50; // 10-200
-        public static bool EnableRelayOpt = true;
-        public static bool EnableMotionSensorOpt = true;
-        public static bool EnableWaterDetectorOpt = true;
         public static bool EnableButtonTerminalOpt = true;
         public static bool EnablePumpOpt = true;
 
@@ -345,37 +331,13 @@ namespace ItemOptimizerMod
                     GroundItemSkipFrames = ParseInt(gi.Attribute("skipFrames")?.Value, 3, 1, 30);
                 }
 
-                var ci = root.Element("CustomInterfaceThrottle");
-                if (ci != null)
-                    EnableCustomInterfaceThrottle = ParseBool(ci.Attribute("enabled")?.Value, true);
-
                 var ms = root.Element("MotionSensorThrottle");
                 if (ms != null)
-                {
-                    EnableMotionSensorThrottle = ParseBool(ms.Attribute("enabled")?.Value, true);
                     MotionSensorSkipFrames = ParseInt(ms.Attribute("skipFrames")?.Value, 3, 1, 30);
-                }
-
-                var we = root.Element("WearableThrottle");
-                if (we != null)
-                {
-                    EnableWearableThrottle = ParseBool(we.Attribute("enabled")?.Value, true);
-                    WearableSkipFrames = ParseInt(we.Attribute("skipFrames")?.Value, 3, 1, 30);
-                }
 
                 var wd = root.Element("WaterDetectorThrottle");
                 if (wd != null)
-                {
-                    EnableWaterDetectorThrottle = ParseBool(wd.Attribute("enabled")?.Value, true);
                     WaterDetectorSkipFrames = ParseInt(wd.Attribute("skipFrames")?.Value, 3, 1, 30);
-                }
-
-                var dr = root.Element("DoorThrottle");
-                if (dr != null)
-                {
-                    EnableDoorThrottle = ParseBool(dr.Attribute("enabled")?.Value, false);
-                    DoorSkipFrames = ParseInt(dr.Attribute("skipFrames")?.Value, 2, 1, 30);
-                }
 
                 var hst = root.Element("HasStatusTagCache");
                 if (hst != null)
@@ -409,18 +371,6 @@ namespace ItemOptimizerMod
                 if (pcRw != null)
                     EnablePowerContainerRewrite = ParseBool(pcRw.Attribute("enabled")?.Value, true);
 
-                var shud = root.Element("StatusHUDThrottle");
-                if (shud != null)
-                {
-                    EnableStatusHUDThrottle = ParseBool(shud.Attribute("enabled")?.Value, true);
-                    StatusHUDScanInterval = ParseFloat(shud.Attribute("scanInterval")?.Value, 1.5f, 0.5f, 5.0f);
-                    StatusHUDDrawSkipFrames = ParseInt(shud.Attribute("drawSkipFrames")?.Value, 3, 1, 10);
-                }
-
-                var afd = root.Element("AfflictionDedup");
-                if (afd != null)
-                    EnableAfflictionDedup = ParseBool(afd.Attribute("enabled")?.Value, true);
-
                 var animLod = root.Element("AnimLOD");
                 if (animLod != null)
                     EnableAnimLOD = ParseBool(animLod.Attribute("enabled")?.Value, true);
@@ -453,8 +403,10 @@ namespace ItemOptimizerMod
 
                 var nrt = root.Element("NativeRuntime");
                 if (nrt != null)
+                {
                     EnableNativeRuntime = ParseBool(nrt.Attribute("enabled")?.Value, false);
                     EnableZoneSkip = ParseBool(nrt.Attribute("zoneSkip")?.Value, true);
+                }
 
                 var proxy = root.Element("ProxySystem");
                 if (proxy != null)
@@ -467,15 +419,6 @@ namespace ItemOptimizerMod
                     InteractionLabelMaxCount = ParseInt(intLabel.Attribute("maxCount")?.Value, 50, 10, 200);
                 }
 
-                var relayOpt = root.Element("RelayOpt");
-                if (relayOpt != null)
-                    EnableRelayOpt = ParseBool(relayOpt.Attribute("enabled")?.Value, true);
-                var motionOpt = root.Element("MotionSensorOpt");
-                if (motionOpt != null)
-                    EnableMotionSensorOpt = ParseBool(motionOpt.Attribute("enabled")?.Value, true);
-                var waterDetOpt = root.Element("WaterDetectorOpt");
-                if (waterDetOpt != null)
-                    EnableWaterDetectorOpt = ParseBool(waterDetOpt.Attribute("enabled")?.Value, true);
                 var btnTermOpt = root.Element("ButtonTerminalOpt");
                 if (btnTermOpt != null)
                     EnableButtonTerminalOpt = ParseBool(btnTermOpt.Attribute("enabled")?.Value, true);
@@ -525,30 +468,10 @@ namespace ItemOptimizerMod
                         new XElement("GroundItemThrottle",
                             new XAttribute("enabled", EnableGroundItemThrottle),
                             new XAttribute("skipFrames", GroundItemSkipFrames)),
-                        new XElement("CustomInterfaceThrottle",
-                            new XAttribute("enabled", EnableCustomInterfaceThrottle)),
-                        new XElement("MotionSensorThrottle",
-                            new XAttribute("enabled", EnableMotionSensorThrottle),
-                            new XAttribute("skipFrames", MotionSensorSkipFrames)),
-                        new XElement("WearableThrottle",
-                            new XAttribute("enabled", EnableWearableThrottle),
-                            new XAttribute("skipFrames", WearableSkipFrames)),
-                        new XElement("WaterDetectorThrottle",
-                            new XAttribute("enabled", EnableWaterDetectorThrottle),
-                            new XAttribute("skipFrames", WaterDetectorSkipFrames)),
-                        new XElement("DoorThrottle",
-                            new XAttribute("enabled", EnableDoorThrottle),
-                            new XAttribute("skipFrames", DoorSkipFrames)),
                         new XElement("HasStatusTagCache",
                             new XAttribute("enabled", EnableHasStatusTagCache)),
                         new XElement("HullSpatialIndex",
                             new XAttribute("enabled", EnableHullSpatialIndex)),
-                        new XElement("StatusHUDThrottle",
-                            new XAttribute("enabled", EnableStatusHUDThrottle),
-                            new XAttribute("scanInterval", StatusHUDScanInterval),
-                            new XAttribute("drawSkipFrames", StatusHUDDrawSkipFrames)),
-                        new XElement("AfflictionDedup",
-                            new XAttribute("enabled", EnableAfflictionDedup)),
                         new XElement("WireSkip",
                             new XAttribute("enabled", EnableWireSkip)),
                         new XElement("MotionSensorRewrite",
@@ -583,12 +506,6 @@ namespace ItemOptimizerMod
                         new XElement("InteractionLabel",
                             new XAttribute("enabled", EnableInteractionLabelOpt),
                             new XAttribute("maxCount", InteractionLabelMaxCount)),
-                        new XElement("RelayOpt",
-                            new XAttribute("enabled", EnableRelayOpt)),
-                        new XElement("MotionSensorOpt",
-                            new XAttribute("enabled", EnableMotionSensorOpt)),
-                        new XElement("WaterDetectorOpt",
-                            new XAttribute("enabled", EnableWaterDetectorOpt)),
                         new XElement("ButtonTerminalOpt",
                             new XAttribute("enabled", EnableButtonTerminalOpt)),
                         new XElement("PumpOpt",

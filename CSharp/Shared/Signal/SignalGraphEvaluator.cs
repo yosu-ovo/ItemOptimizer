@@ -20,7 +20,13 @@ namespace ItemOptimizerMod.SignalGraph
 
         // ── Internal graph ──
         private static CompiledGraph _graph;
+        // ── Recompilation throttle ──
+        // Wire edits can trigger MarkDirty() many times in rapid succession.
+        // Instead of recompiling immediately, defer for a cooldown period
+        // to batch multiple changes into a single recompile.
         private static bool _dirty;
+        private static int _dirtyCooldown;
+        private const int RecompileCooldownFrames = 30; // ~0.5s at 60fps
         internal static bool IsDirty => _dirty;
         private static int _mode; // 0=Off, 1=Accel, 2=Aggressive
         internal static int Mode => _mode;
@@ -105,10 +111,21 @@ namespace ItemOptimizerMod.SignalGraph
             }
         }
 
-        /// <summary>Mark the graph as needing recompilation (e.g., wire changed).</summary>
+        /// <summary>Mark the graph as needing recompilation (e.g., wire changed).
+        /// Immediately deactivates the graph so vanilla signals take over during cooldown.
+        /// Actual recompile is deferred to batch rapid changes.</summary>
         internal static void MarkDirty()
         {
-            _dirty = true;
+            _dirtyCooldown = RecompileCooldownFrames;
+            if (!_dirty)
+            {
+                // Deactivate immediately — vanilla signal delivery handles the transition.
+                // Without this, SendSignalIntoConnectionPrefix would still intercept signals
+                // and push to capture registers that become invalid after recompile.
+                IsCompiled = false;
+                Array.Clear(_accelerated, 0, 65536);
+                _dirty = true;
+            }
         }
 
         internal static void SetMode(int mode)
@@ -130,14 +147,23 @@ namespace ItemOptimizerMod.SignalGraph
         {
             if (_mode == 0) return;
 
-            // Dirty-flag recompile must be checked BEFORE the IsCompiled gate,
-            // otherwise a failed initial compile (e.g. before items existed)
-            // creates a deadlock where _dirty is never acted upon.
+            // Dirty-flag recompile with cooldown to batch rapid wire changes.
+            // Must be checked BEFORE the IsCompiled gate, otherwise a failed initial
+            // compile creates a deadlock where _dirty is never acted upon.
             if (_dirty)
             {
-                Compile();
-                _dirty = false;
-                if (!IsCompiled) return;
+                _dirtyCooldown--;
+                if (_dirtyCooldown <= 0)
+                {
+                    Compile();
+                    _dirty = false;
+                    if (!IsCompiled) return;
+                }
+                else
+                {
+                    // Still cooling down — skip this tick, let vanilla handle signals
+                    return;
+                }
             }
 
             if (!IsCompiled || _graph == null) return;

@@ -332,7 +332,11 @@ namespace ItemOptimizerMod.Patches
             // NativeRuntime bypass — when managed by NativeRuntime, skip Prefix entirely.
             // NativeRuntime has its own independent tick hook (postfix on MapEntity.UpdateAll)
             // that ensures Tick() runs even when UpdateAllTakeover is OFF.
-            if (IsNativeManaged[__instance.item.ID] && NativeRuntimeBridge.IsEnabled) return false;
+            if (IsNativeManaged[__instance.item.ID])
+            {
+                if (NativeRuntimeBridge.IsEnabled) return false;
+                // Runtime disabled mid-round — fall through to rewrite/vanilla
+            }
 
             if (!OptimizerConfig.EnableMotionSensorRewrite)
             {

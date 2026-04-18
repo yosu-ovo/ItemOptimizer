@@ -14,7 +14,7 @@ namespace ItemOptimizerMod
     /// </summary>
     static class DiagnosticHeader
     {
-        public const string ModVersion = "iter-21-7";
+        public const string ModVersion = "iter-21-9";
 
         /// <summary>
         /// Write diagnostic comment block into a StringBuilder, before the CSV column header.
@@ -76,16 +76,13 @@ namespace ItemOptimizerMod
             sb.Append(" GroundItemThrottle=").Append(B(OptimizerConfig.EnableGroundItemThrottle));
             if (OptimizerConfig.EnableGroundItemThrottle)
                 sb.Append("(skip=").Append(OptimizerConfig.GroundItemSkipFrames).Append(')');
-            sb.Append(" CI=").Append(B(OptimizerConfig.EnableCustomInterfaceThrottle));
             sb.AppendLine();
 
-            // Row 2: sensor throttles + rewrites
-            sb.Append("# MotionThrottle=").Append(B(OptimizerConfig.EnableMotionSensorThrottle));
+            // Row 2: sensor rewrites
+            sb.Append("# MotionRewrite=").Append(B(OptimizerConfig.EnableMotionSensorRewrite));
             sb.Append("(skip=").Append(OptimizerConfig.MotionSensorSkipFrames).Append(')');
-            sb.Append(" MotionRewrite=").Append(B(OptimizerConfig.EnableMotionSensorRewrite));
-            sb.Append(" WaterDetThrottle=").Append(B(OptimizerConfig.EnableWaterDetectorThrottle));
-            sb.Append("(skip=").Append(OptimizerConfig.WaterDetectorSkipFrames).Append(')');
             sb.Append(" WaterDetRewrite=").Append(B(OptimizerConfig.EnableWaterDetectorRewrite));
+            sb.Append("(skip=").Append(OptimizerConfig.WaterDetectorSkipFrames).Append(')');
             sb.AppendLine();
 
             // Row 3: power rewrites
@@ -96,13 +93,8 @@ namespace ItemOptimizerMod
 
             // Row 4: misc toggles
             sb.Append("# WireSkip=").Append(B(OptimizerConfig.EnableWireSkip));
-            sb.Append(" DoorThrottle=").Append(B(OptimizerConfig.EnableDoorThrottle));
-            if (OptimizerConfig.EnableDoorThrottle)
-                sb.Append("(skip=").Append(OptimizerConfig.DoorSkipFrames).Append(')');
-            sb.Append(" WearableThrottle=").Append(B(OptimizerConfig.EnableWearableThrottle));
             sb.Append(" HST=").Append(B(OptimizerConfig.EnableHasStatusTagCache));
             sb.Append(" HullSpatial=").Append(B(OptimizerConfig.EnableHullSpatialIndex));
-            sb.Append(" AfflictionDedup=").Append(B(OptimizerConfig.EnableAfflictionDedup));
             sb.AppendLine();
 
             // Row 5: character + advanced
@@ -115,10 +107,7 @@ namespace ItemOptimizerMod
             sb.AppendLine();
 
             // Row 6: client opts
-            sb.Append("# RelayOpt=").Append(B(OptimizerConfig.EnableRelayOpt));
-            sb.Append(" MotionSensorOpt=").Append(B(OptimizerConfig.EnableMotionSensorOpt));
-            sb.Append(" WaterDetectorOpt=").Append(B(OptimizerConfig.EnableWaterDetectorOpt));
-            sb.Append(" ButtonTerminalOpt=").Append(B(OptimizerConfig.EnableButtonTerminalOpt));
+            sb.Append("# ButtonTerminalOpt=").Append(B(OptimizerConfig.EnableButtonTerminalOpt));
             sb.Append(" PumpOpt=").Append(B(OptimizerConfig.EnablePumpOpt));
             sb.AppendLine();
         }

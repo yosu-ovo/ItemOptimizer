@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
 using Barotrauma;
 
 namespace ItemOptimizerMod.Proxy
@@ -68,14 +66,6 @@ namespace ItemOptimizerMod.Proxy
 
         // ── Attachment tracking (avoid duplicate OnAttach) ──
         private static readonly HashSet<ushort> _attachedIds = new();
-
-        // ── Scheduling thresholds ──
-        private const int SerialThreshold = 50;   // below this total count: skip Task overhead
-        private const int MinParallelCount = 16;   // handler needs this many items to get its own Task
-
-        // ── Timing (written by Tick, read by Stats) ──
-        public static long LastBatchComputeTicks;
-        public static long LastSyncBackTicks;
 
         public static bool HasHandlers => _handlerList.Count > 0;
         public static int TotalCount => _handlerList.Sum(h => h.Count);
@@ -214,83 +204,6 @@ namespace ItemOptimizerMod.Proxy
             }
         }
 
-        /// <summary>
-        /// Main tick entry — called by UpdateAllTakeover BEFORE DispatchItemUpdates.
-        /// Phase 0a: parallel BatchCompute, Phase 0b: sequential SyncBack.
-        /// </summary>
-        public static void Tick(float deltaTime)
-        {
-            if (_handlerList.Count == 0) return;
-
-            CleanupRemoved();
-
-            int total = 0;
-            foreach (var h in _handlerList)
-                total += h.Count;
-
-            if (total == 0) return;
-
-            // ── Phase 0a: BatchCompute ──
-            long t0 = Stopwatch.GetTimestamp();
-
-            if (total < SerialThreshold || _handlerList.Count == 1)
-            {
-                foreach (var h in _handlerList)
-                    h.BatchCompute(deltaTime);
-            }
-            else
-            {
-                var heavy = new List<IProxyHandler>();
-                var light = new List<IProxyHandler>();
-                foreach (var h in _handlerList)
-                {
-                    if (h.Count >= MinParallelCount)
-                        heavy.Add(h);
-                    else
-                        light.Add(h);
-                }
-
-                var tasks = new List<Task>(heavy.Count + 1);
-
-                foreach (var h in heavy)
-                {
-                    var handler = h;
-                    var dt = deltaTime;
-                    tasks.Add(Task.Run(() => handler.BatchCompute(dt)));
-                }
-
-                if (light.Count > 0)
-                {
-                    var lightCopy = light.ToArray();
-                    var dt = deltaTime;
-                    tasks.Add(Task.Run(() =>
-                    {
-                        foreach (var h in lightCopy)
-                            h.BatchCompute(dt);
-                    }));
-                }
-
-                try
-                {
-                    Task.WaitAll(tasks.ToArray());
-                }
-                catch (AggregateException ae)
-                {
-                    foreach (var e in ae.Flatten().InnerExceptions)
-                        LuaCsLogger.LogError($"[ItemOptimizer:Proxy] Worker error: {e.Message}\n{e.StackTrace}");
-                }
-            }
-
-            long t1 = Stopwatch.GetTimestamp();
-            LastBatchComputeTicks = t1 - t0;
-
-            // ── Phase 0b: SyncBack (main thread) ──
-            foreach (var h in _handlerList)
-                h.SyncBack();
-
-            LastSyncBackTicks = Stopwatch.GetTimestamp() - t1;
-        }
-
         /// <summary>Detach items that have been removed from the game.</summary>
         private static void CleanupRemoved()
         {
@@ -332,8 +245,6 @@ namespace ItemOptimizerMod.Proxy
                 }
             }
             _attachedIds.Clear();
-            LastBatchComputeTicks = 0;
-            LastSyncBackTicks = 0;
         }
 
         /// <summary>
@@ -344,8 +255,6 @@ namespace ItemOptimizerMod.Proxy
         public static void ClearStaleAttachments()
         {
             _attachedIds.Clear();
-            LastBatchComputeTicks = 0;
-            LastSyncBackTicks = 0;
         }
 
         /// <summary>Detach all items and clear all handlers. Called on Dispose.</summary>
@@ -363,8 +272,6 @@ namespace ItemOptimizerMod.Proxy
             _handlerMap.Clear();
             _handlerList.Clear();
             _proxyIds.Clear();
-            LastBatchComputeTicks = 0;
-            LastSyncBackTicks = 0;
         }
     }
 }
