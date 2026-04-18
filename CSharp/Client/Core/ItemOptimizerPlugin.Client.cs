@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using Barotrauma;
-using Barotrauma.Items.Components;
 using HarmonyLib;
 using ItemOptimizerMod.Patches;
 using Microsoft.Xna.Framework;
@@ -29,15 +28,6 @@ namespace ItemOptimizerMod
                 postfix: new HarmonyMethod(AccessTools.Method(
                     typeof(ItemOptimizerPlugin), nameof(GuiDrawPostfix))));
 
-            // StatusHUD throttle — always patch, runtime-guarded by config flag
-            var statusHudUpdate = AccessTools.Method(typeof(StatusHUD), nameof(StatusHUD.Update));
-            var statusHudDrawThermal = AccessTools.Method(typeof(StatusHUD), nameof(StatusHUD.DrawThermalOverlay));
-            harmony.Patch(statusHudUpdate,
-                prefix: new HarmonyMethod(AccessTools.Method(typeof(StatusHUDPatch), nameof(StatusHUDPatch.Prefix))),
-                postfix: new HarmonyMethod(AccessTools.Method(typeof(StatusHUDPatch), nameof(StatusHUDPatch.Postfix))));
-            harmony.Patch(statusHudDrawThermal,
-                prefix: new HarmonyMethod(AccessTools.Method(typeof(StatusHUDPatch), nameof(StatusHUDPatch.DrawThermalPrefix))));
-
             // Register client-side metric receiver for server HUD overlay
             MetricRelayReceiver.Register();
 
@@ -51,9 +41,6 @@ namespace ItemOptimizerMod
 
             // Interaction label optimization — cap ALT labels, runtime-guarded
             InteractionLabelPatch.Register(harmony);
-
-            // Signal component source-level optimizations — runtime-guarded by individual config flags
-            SignalOptPatches.Register(harmony);
 
             // Register client-side sync tracking receiver
             SyncRelayReceiver.Register();
@@ -73,16 +60,8 @@ namespace ItemOptimizerMod
 
         partial void RegisterProxyHandlers()
         {
-            if (!OptimizerConfig.EnableProxySystem) return;
-            try
-            {
-                Proxy.ProxyRegistry.Register(new Identifier("proxy_light"), new Proxy.ProxyLightHandler());
-                LuaCsLogger.Log("[ItemOptimizer] Built-in ProxyLightHandler registered.");
-            }
-            catch (Exception e)
-            {
-                LuaCsLogger.LogError($"[ItemOptimizer] ProxyLightHandler registration failed: {e.Message}");
-            }
+            // Built-in proxy_light handler migrated to LightNativeComponent (Zone scheduling).
+            // External handlers registered via ProxyRegistry.RegisterDynamic still work.
         }
 
         // ── Harmony Postfixes ──
@@ -121,6 +100,7 @@ namespace ItemOptimizerMod
 
         private static void GuiDrawPostfix(SpriteBatch spriteBatch)
         {
+            SettingsPanel.TickImpactBars();
             StatsOverlay.Draw(spriteBatch);
             ServerPerfOverlay.Draw(spriteBatch);
         }

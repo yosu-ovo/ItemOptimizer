@@ -37,6 +37,21 @@ namespace ItemOptimizerMod
         // Collapse state for sections
         private static bool _rulesExpanded = false;
         private static bool _whitelistExpanded = false;
+        private static bool _showImpactBars = false;
+
+        // ── Impact bar animation state ──
+        private struct ImpactBarState
+        {
+            public GUIProgressBar Bar;
+            public GUITextBlock PctLabel;
+            public string FeatureKey;
+            public float CurrentFraction;
+            public float TargetFraction;
+        }
+        private static readonly List<ImpactBarState> _impactBars = new();
+        private static GUITextBlock _totalSavedLabel;
+        private static int _tickCounter;
+        private static bool _animActive;
 
         // ── Panel Lifecycle ──
 
@@ -121,20 +136,26 @@ namespace ItemOptimizerMod
             ruleRows.Clear();
             _modPanelRefs.Clear();
             _overlayWidgets.Clear();
+            _impactBars.Clear();
+            _totalSavedLabel = null;
+            _animActive = false;
             _cachedMods = null;
         }
 
         private static void Rebuild()
         {
             if (frame == null) return;
+            float scroll = listBox?.BarScroll ?? 0f;
             ruleRows.Clear();
             _modPanelRefs.Clear();
+            _impactBars.Clear();
             foreach (var w in _overlayWidgets)
                 frame.RemoveChild(w);
             _overlayWidgets.Clear();
             foreach (var child in new List<GUIComponent>(listBox.Content.Children))
                 listBox.Content.RemoveChild(child);
             BuildContent();
+            if (listBox != null) listBox.BarScroll = scroll;
         }
 
         // ── Build Content ──
@@ -156,55 +177,117 @@ namespace ItemOptimizerMod
                 }
             };
 
+            // ── Impact Bar toggle ──
+            new GUITickBox(
+                new RectTransform(new Vector2(1f, 0.05f), content.RectTransform),
+                Localization.T("impact_bar_toggle"))
+            {
+                Selected = _showImpactBars,
+                ToolTip = Localization.T("impact_bar_toggle_desc"),
+                OnSelected = tb =>
+                {
+                    _showImpactBars = tb.Selected;
+                    _impactBars.Clear();
+                    Rebuild();
+                    return true;
+                }
+            };
+
+            var impact = ComputeImpact();
+
             // ══════════════════════════════════════════════
-            //  Section 1: Core Optimization
+            //  Section 1: 核心优化 (Core)
             // ══════════════════════════════════════════════
             SectionHeader(content, Localization.T("section_core_opt"));
 
-            // -- Item Update Strategies --
             StrategyTickBox(content, "strategy_cold_storage", "strategy_cold_storage_desc",
                 OptimizerConfig.EnableColdStorageSkip,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("cold_storage", v));
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("cold_storage", v); if (_showImpactBars) RefreshImpactTargets(); },
+                ImpactFrac(impact.ColdMs, impact.TotalMs));
 
             StrategyTickBoxWithNumber(content, "strategy_ground_item", "strategy_ground_item_desc",
                 OptimizerConfig.EnableGroundItemThrottle,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("ground_item", v),
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("ground_item", v); if (_showImpactBars) RefreshImpactTargets(); },
                 OptimizerConfig.GroundItemSkipFrames,
-                v => OptimizerConfig.GroundItemSkipFrames = v);
+                v => OptimizerConfig.GroundItemSkipFrames = v,
+                ImpactFrac(impact.GroundMs, impact.TotalMs));
 
-            StrategyTickBox(content, "strategy_ci_throttle", "strategy_ci_throttle_desc",
-                OptimizerConfig.EnableCustomInterfaceThrottle,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("ci_throttle", v));
+            StrategyTickBox(content, "strategy_zone_dispatch", "strategy_zone_dispatch_desc",
+                OptimizerConfig.EnableNativeRuntime,
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("native_runtime", v); if (_showImpactBars) RefreshImpactTargets(); },
+                ImpactFrac(impact.ZoneMs, impact.TotalMs));
 
-            StrategyTickBoxWithNumber(content, "strategy_wearable", "strategy_wearable_desc",
-                OptimizerConfig.EnableWearableThrottle,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("wearable", v),
-                OptimizerConfig.WearableSkipFrames,
-                v => OptimizerConfig.WearableSkipFrames = v);
+            StrategyDropDown(content, "strategy_signal_graph", "strategy_signal_graph_desc",
+                new[] { "signal_graph_off", "signal_graph_accel", "signal_graph_aggressive" },
+                OptimizerConfig.SignalGraphMode,
+                v => { ItemOptimizerPlugin.SetStrategyValue("signal_graph_accel", v); if (_showImpactBars) RefreshImpactTargets(); },
+                ImpactFrac(impact.SgMs, impact.TotalMs));
 
-            StrategyTickBoxWithNumber(content, "strategy_door", "strategy_door_desc",
-                OptimizerConfig.EnableDoorThrottle,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("door", v),
-                OptimizerConfig.DoorSkipFrames,
-                v => OptimizerConfig.DoorSkipFrames = v);
+            // ══════════════════════════════════════════════
+            //  Section 2: 传感器 (Sensors)
+            // ══════════════════════════════════════════════
+            SectionHeader(content, Localization.T("section_sensor"));
 
-            StrategyTickBox(content, "strategy_hst_cache", "strategy_hst_cache_desc",
-                OptimizerConfig.EnableHasStatusTagCache,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("has_status_tag_cache", v));
+            // Motion Sensor: rewrite toggle + skip frames
+            StrategyTickBoxWithNumber(content, "strategy_motion_sensor", "strategy_motion_sensor_desc",
+                OptimizerConfig.EnableMotionSensorRewrite,
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("motion_rewrite", v); if (_showImpactBars) RefreshImpactTargets(); },
+                OptimizerConfig.MotionSensorSkipFrames,
+                v => OptimizerConfig.MotionSensorSkipFrames = v,
+                ImpactFrac(impact.MotionMs, impact.TotalMs));
 
-            StrategyTickBox(content, "strategy_statushud", "strategy_statushud_desc",
-                OptimizerConfig.EnableStatusHUDThrottle,
-                v => OptimizerConfig.EnableStatusHUDThrottle = v);
+            // Water Detector: rewrite toggle + skip frames
+            StrategyTickBoxWithNumber(content, "strategy_water_detector_mode", "strategy_water_detector_mode_desc",
+                OptimizerConfig.EnableWaterDetectorRewrite,
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("water_det_rewrite", v); if (_showImpactBars) RefreshImpactTargets(); },
+                OptimizerConfig.WaterDetectorSkipFrames,
+                v => OptimizerConfig.WaterDetectorSkipFrames = v,
+                ImpactFrac(impact.WaterMs, impact.TotalMs));
 
-            StrategyTickBox(content, "strategy_affliction", "strategy_affliction_desc",
-                OptimizerConfig.EnableAfflictionDedup,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("affliction_dedup", v));
+            StrategyTickBox(content, "strategy_hull_spatial", "strategy_hull_spatial_desc",
+                OptimizerConfig.EnableHullSpatialIndex,
+                v => OptimizerConfig.EnableHullSpatialIndex = v);
+
+            // ══════════════════════════════════════════════
+            //  Section 3: 客户端 (Client)
+            // ══════════════════════════════════════════════
+            SectionHeader(content, Localization.T("section_client_opt"));
+
+            StrategyTickBoxWithNumber(content,
+                "strategy_interaction_label", "strategy_interaction_label_desc",
+                OptimizerConfig.EnableInteractionLabelOpt,
+                v => OptimizerConfig.EnableInteractionLabelOpt = v,
+                OptimizerConfig.InteractionLabelMaxCount,
+                v => OptimizerConfig.InteractionLabelMaxCount = Math.Clamp(v, 10, 200),
+                10, 200, "interaction_label_max_label");
+
+            // ══════════════════════════════════════════════
+            //  Section 4: 中等优化 (Medium)
+            // ══════════════════════════════════════════════
+            SectionHeader(content, Localization.T("section_advanced"));
 
             StrategyTickBox(content, "strategy_wire_skip", "strategy_wire_skip_desc",
                 OptimizerConfig.EnableWireSkip,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("wire_skip", v));
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("wire_skip", v); if (_showImpactBars) RefreshImpactTargets(); },
+                ImpactFrac(impact.WireMs, impact.TotalMs));
 
-            // -- Rewrites --
+            StrategyTickBox(content, "strategy_misc_parallel", "strategy_misc_parallel_desc",
+                OptimizerConfig.EnableMiscParallel,
+                v => OptimizerConfig.EnableMiscParallel = v);
+
+            StrategyTickBox(content, "strategy_button_terminal_opt", "strategy_button_terminal_opt_desc",
+                OptimizerConfig.EnableButtonTerminalOpt,
+                v => OptimizerConfig.EnableButtonTerminalOpt = v);
+
+            StrategyTickBox(content, "strategy_pump_opt", "strategy_pump_opt_desc",
+                OptimizerConfig.EnablePumpOpt,
+                v => OptimizerConfig.EnablePumpOpt = v);
+
+            // ══════════════════════════════════════════════
+            //  Section 5: 电路系统（实验性）(Circuit - Experimental)
+            // ══════════════════════════════════════════════
+            SectionHeader(content, Localization.T("section_circuit"));
+
             StrategyTickBox(content, "strategy_relay_rewrite", "strategy_relay_rewrite_desc",
                 OptimizerConfig.EnableRelayRewrite,
                 v => ItemOptimizerPlugin.SetStrategyEnabled("relay_rewrite", v));
@@ -217,21 +300,32 @@ namespace ItemOptimizerMod
                 OptimizerConfig.EnablePowerContainerRewrite,
                 v => ItemOptimizerPlugin.SetStrategyEnabled("power_container_rewrite", v));
 
-            // -- Character Optimization --
+            StrategyTickBox(content, "strategy_hst_cache", "strategy_hst_cache_desc",
+                OptimizerConfig.EnableHasStatusTagCache,
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("has_status_tag_cache", v); if (_showImpactBars) RefreshImpactTargets(); },
+                ImpactFrac(impact.HstMs, impact.TotalMs));
+
+            // ══════════════════════════════════════════════
+            //  Section 6: 角色 (Character)
+            // ══════════════════════════════════════════════
             SectionHeader(content, Localization.T("section_character_opt"));
 
             StrategyTickBox(content, "strategy_anim_lod", "strategy_anim_lod_desc",
                 OptimizerConfig.EnableAnimLOD,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("anim_lod", v));
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("anim_lod", v); if (_showImpactBars) RefreshImpactTargets(); },
+                ImpactFrac(impact.AnimMs, impact.TotalMs));
 
             StrategyTickBoxWithNumber(content, "strategy_char_stagger", "strategy_char_stagger_desc",
                 OptimizerConfig.EnableCharacterStagger,
-                v => ItemOptimizerPlugin.SetStrategyEnabled("char_stagger", v),
+                v => { ItemOptimizerPlugin.SetStrategyEnabled("char_stagger", v); if (_showImpactBars) RefreshImpactTargets(); },
                 OptimizerConfig.CharacterStaggerGroups,
                 v => OptimizerConfig.CharacterStaggerGroups = Math.Clamp(v, 2, 8),
-                2, 8, "stagger_groups_label");
+                2, 8, "stagger_groups_label",
+                ImpactFrac(impact.StaggerMs, impact.TotalMs));
 
-            // -- Network Sync Fixes --
+            // ══════════════════════════════════════════════
+            //  Section 7: 网络同步 (Network)
+            // ══════════════════════════════════════════════
             SectionHeader(content, Localization.T("section_network_sync"));
 
             StrategyTickBox(content, "strategy_ladder_fix", "strategy_ladder_fix_desc",
@@ -246,59 +340,9 @@ namespace ItemOptimizerMod
                 OptimizerConfig.EnableServerHashSetDedup,
                 v => ItemOptimizerPlugin.SetStrategyEnabled("server_hashset_dedup", v));
 
-            // -- Advanced --
-            SectionHeader(content, Localization.T("section_advanced"));
-
-            StrategyTickBox(content, "strategy_misc_parallel", "strategy_misc_parallel_desc",
-                OptimizerConfig.EnableMiscParallel,
-                v => OptimizerConfig.EnableMiscParallel = v);
-
-            StrategyDropDown(content, "strategy_signal_graph", "strategy_signal_graph_desc",
-                new[] { "signal_graph_off", "signal_graph_accel", "signal_graph_aggressive" },
-                OptimizerConfig.SignalGraphMode,
-                v => ItemOptimizerPlugin.SetStrategyValue("signal_graph_accel", v));
-
-            // Motion Sensor: Off(0) | Throttle(1) | Rewrite(2)
-            int motionMode = OptimizerConfig.EnableMotionSensorRewrite ? 2
-                           : OptimizerConfig.EnableMotionSensorThrottle ? 1 : 0;
-            StrategyDropDownWithNumber(content, "strategy_motion_sensor", "strategy_motion_sensor_desc",
-                new[] { "sensor_off", "sensor_throttle", "sensor_rewrite" },
-                motionMode,
-                v =>
-                {
-                    if (v != 2 && OptimizerConfig.EnableMotionSensorRewrite)
-                        ItemOptimizerPlugin.SetStrategyEnabled("motion_rewrite", false);
-                    if (v != 1 && OptimizerConfig.EnableMotionSensorThrottle)
-                        ItemOptimizerPlugin.SetStrategyEnabled("motion", false);
-                    if (v == 1) ItemOptimizerPlugin.SetStrategyEnabled("motion", true);
-                    if (v == 2) ItemOptimizerPlugin.SetStrategyEnabled("motion_rewrite", true);
-                },
-                OptimizerConfig.MotionSensorSkipFrames,
-                v => OptimizerConfig.MotionSensorSkipFrames = v);
-
-            // Water Detector: Off(0) | Throttle(1) | Rewrite(2)
-            int waterMode = OptimizerConfig.EnableWaterDetectorRewrite ? 2
-                          : OptimizerConfig.EnableWaterDetectorThrottle ? 1 : 0;
-            StrategyDropDownWithNumber(content, "strategy_water_detector_mode", "strategy_water_detector_mode_desc",
-                new[] { "sensor_off", "sensor_throttle", "sensor_rewrite" },
-                waterMode,
-                v =>
-                {
-                    if (v != 2 && OptimizerConfig.EnableWaterDetectorRewrite)
-                        ItemOptimizerPlugin.SetStrategyEnabled("water_det_rewrite", false);
-                    if (v != 1 && OptimizerConfig.EnableWaterDetectorThrottle)
-                        ItemOptimizerPlugin.SetStrategyEnabled("water_detector", false);
-                    if (v == 1) ItemOptimizerPlugin.SetStrategyEnabled("water_detector", true);
-                    if (v == 2) ItemOptimizerPlugin.SetStrategyEnabled("water_det_rewrite", true);
-                },
-                OptimizerConfig.WaterDetectorSkipFrames,
-                v => OptimizerConfig.WaterDetectorSkipFrames = v);
-
-            StrategyTickBox(content, "strategy_hull_spatial", "strategy_hull_spatial_desc",
-                OptimizerConfig.EnableHullSpatialIndex,
-                v => OptimizerConfig.EnableHullSpatialIndex = v);
-
-            // -- Developer Tools --
+            // ══════════════════════════════════════════════
+            //  Section 8: 开发者工具 (Developer)
+            // ══════════════════════════════════════════════
             SectionHeader(content, Localization.T("section_dev_tools"));
 
             StrategyTickBox(content, "strategy_spike_detector", "strategy_spike_detector_desc",
@@ -338,39 +382,8 @@ namespace ItemOptimizerMod
                 DebugConsole.IsOpen = true;
             });
 
-            // -- Client Optimization --
-            SectionHeader(content, Localization.T("section_client_opt"));
-
-            StrategyTickBoxWithNumber(content,
-                "strategy_interaction_label", "strategy_interaction_label_desc",
-                OptimizerConfig.EnableInteractionLabelOpt,
-                v => OptimizerConfig.EnableInteractionLabelOpt = v,
-                OptimizerConfig.InteractionLabelMaxCount,
-                v => OptimizerConfig.InteractionLabelMaxCount = Math.Clamp(v, 10, 200),
-                10, 200, "interaction_label_max_label");
-
-            StrategyTickBox(content, "strategy_relay_opt", "strategy_relay_opt_desc",
-                OptimizerConfig.EnableRelayOpt,
-                v => OptimizerConfig.EnableRelayOpt = v);
-
-            StrategyTickBox(content, "strategy_motion_sensor_opt", "strategy_motion_sensor_opt_desc",
-                OptimizerConfig.EnableMotionSensorOpt,
-                v => OptimizerConfig.EnableMotionSensorOpt = v);
-
-            StrategyTickBox(content, "strategy_water_detector_opt", "strategy_water_detector_opt_desc",
-                OptimizerConfig.EnableWaterDetectorOpt,
-                v => OptimizerConfig.EnableWaterDetectorOpt = v);
-
-            StrategyTickBox(content, "strategy_button_terminal_opt", "strategy_button_terminal_opt_desc",
-                OptimizerConfig.EnableButtonTerminalOpt,
-                v => OptimizerConfig.EnableButtonTerminalOpt = v);
-
-            StrategyTickBox(content, "strategy_pump_opt", "strategy_pump_opt_desc",
-                OptimizerConfig.EnablePumpOpt,
-                v => OptimizerConfig.EnablePumpOpt = v);
-
             // ══════════════════════════════════════════════
-            //  Section 2: Mod Item Management
+            //  Section 9-11: Mod Control / Item Rules / Whitelist
             // ══════════════════════════════════════════════
 
             // Mod Control Panel (always visible)
@@ -383,7 +396,7 @@ namespace ItemOptimizerMod
             BuildWhitelistSection(content);
 
             // ══════════════════════════════════════════════
-            //  Section 3: Diagnostics & Stats
+            //  Diagnostics & Stats
             // ══════════════════════════════════════════════
             SectionHeader(content, Localization.T("section_diagnostics"));
 
@@ -391,21 +404,16 @@ namespace ItemOptimizerMod
 
             StatLine(content, "strategy_cold_storage", Stats.AvgColdStorageSkips);
             StatLine(content, "stats_ground_item", Stats.AvgGroundItemSkips);
-            StatLine(content, "strategy_ci_throttle", Stats.AvgCustomInterfaceSkips);
-            StatLine(content, "strategy_motion", Stats.AvgMotionSensorSkips);
-            StatLine(content, "strategy_wearable", Stats.AvgWearableSkips);
+            StatLine(content, "strategy_motion_sensor", Stats.AvgMotionSensorSkips);
             StatLine(content, "stats_item_rules", Stats.AvgItemRuleSkips);
             StatLine(content, "stats_mod_opt", Stats.AvgModOptSkips);
             StatLine(content, "stats_water_det", Stats.AvgWaterDetectorSkips);
-            StatLine(content, "stats_door", Stats.AvgDoorSkips);
             StatLine(content, "stats_hst_cache", Stats.AvgHasStatusTagCacheHits);
-            StatLine(content, "stats_statushud", Stats.AvgStatusHUDSkips);
-            StatLine(content, "stats_affliction", Stats.AvgAfflictionDedupSkips);
             StatLine(content, "stats_wire_skip", Stats.AvgWireSkips);
             StatLine(content, "stats_signal_graph_skip", Stats.AvgSignalGraphAccelSkips);
             StatLine(content, "stats_signal_graph_tick", Stats.AvgSignalGraphTickMs);
 
-            new GUITextBlock(
+            _totalSavedLabel = new GUITextBlock(
                 new RectTransform(new Vector2(1f, 0.04f), content.RectTransform),
                 Localization.Format("stats_saved", Stats.EstimatedSavedMs()),
                 textColor: Color.LimeGreen,
@@ -416,6 +424,117 @@ namespace ItemOptimizerMod
         {
             OptimizerConfig.BuildLookupTables();
             OptimizerConfig.AutoSave();
+        }
+
+        // ── Impact bar computation ──
+
+        private struct ImpactSnapshot
+        {
+            public float ColdMs, GroundMs, ZoneMs, SgMs, MotionMs, WaterMs,
+                         WireMs, HstMs, AnimMs, StaggerMs, TotalMs;
+        }
+
+        private static ImpactSnapshot ComputeImpact()
+        {
+            var s = new ImpactSnapshot();
+            s.ColdMs    = OptimizerConfig.EnableColdStorageSkip     ? Stats.AvgColdStorageSkips      * Stats.CostColdStorage    : 0f;
+            s.GroundMs  = OptimizerConfig.EnableGroundItemThrottle  ? Stats.AvgGroundItemSkips       * Stats.CostGroundItem     : 0f;
+            s.ZoneMs    = OptimizerConfig.EnableNativeRuntime       ? Stats.AvgZoneSkips             * Stats.CostZoneSkip       : 0f;
+            s.SgMs      = OptimizerConfig.SignalGraphMode > 0       ? Stats.AvgSignalGraphAccelSkips * Stats.CostSignalGraph    : 0f;
+            s.MotionMs  = OptimizerConfig.EnableMotionSensorRewrite ? Stats.AvgMotionSensorSkips     * Stats.CostMotionSensor   : 0f;
+            s.WaterMs   = OptimizerConfig.EnableWaterDetectorRewrite? Stats.AvgWaterDetectorSkips    * Stats.CostWaterDetector  : 0f;
+            s.WireMs    = OptimizerConfig.EnableWireSkip            ? Stats.AvgWireSkips             * Stats.CostWireSkip       : 0f;
+            s.HstMs     = OptimizerConfig.EnableHasStatusTagCache   ? Stats.AvgHasStatusTagCacheHits * Stats.CostHSTCache       : 0f;
+            s.AnimMs    = OptimizerConfig.EnableAnimLOD             ? Stats.AvgAnimLODSkipped * Stats.CostAnimLODSkip + Stats.AvgAnimLODHalfRate * Stats.CostAnimLODHalf : 0f;
+            s.StaggerMs = OptimizerConfig.EnableCharacterStagger    ? Stats.AvgCharStaggerSkipped    * Stats.CostCharStagger    : 0f;
+            s.TotalMs   = s.ColdMs + s.GroundMs + s.ZoneMs + s.SgMs + s.MotionMs + s.WaterMs + s.WireMs + s.HstMs + s.AnimMs + s.StaggerMs;
+            return s;
+        }
+
+        private static float GetFeatureMs(string key, ImpactSnapshot snap)
+        {
+            return key switch
+            {
+                "strategy_cold_storage"        => snap.ColdMs,
+                "strategy_ground_item"         => snap.GroundMs,
+                "strategy_zone_dispatch"       => snap.ZoneMs,
+                "strategy_signal_graph"        => snap.SgMs,
+                "strategy_motion_sensor"       => snap.MotionMs,
+                "strategy_water_detector_mode" => snap.WaterMs,
+                "strategy_wire_skip"           => snap.WireMs,
+                "strategy_hst_cache"           => snap.HstMs,
+                "strategy_anim_lod"            => snap.AnimMs,
+                "strategy_char_stagger"        => snap.StaggerMs,
+                _ => 0f
+            };
+        }
+
+        private static float ImpactFrac(float featureMs, float totalMs)
+        {
+            if (!_showImpactBars) return -1f;
+            if (totalMs <= 0.001f) return 0f;
+            return Math.Clamp(featureMs / totalMs, 0f, 1f);
+        }
+
+        /// <summary>
+        /// Recalculate impact bar targets without rebuilding GUI. Called on toggle changes.
+        /// </summary>
+        private static void RefreshImpactTargets()
+        {
+            var snap = ComputeImpact();
+            for (int i = 0; i < _impactBars.Count; i++)
+            {
+                var s = _impactBars[i];
+                float featureMs = GetFeatureMs(s.FeatureKey, snap);
+                s.TargetFraction = snap.TotalMs > 0.001f
+                    ? Math.Clamp(featureMs / snap.TotalMs, 0f, 1f) : 0f;
+                _impactBars[i] = s;
+            }
+            _animActive = true;
+            _tickCounter = 0;
+        }
+
+        /// <summary>
+        /// Per-frame animation driver for impact bars. Called from GuiDrawPostfix.
+        /// </summary>
+        public static void TickImpactBars()
+        {
+            if (frame == null || !_showImpactBars || !_animActive) return;
+            _tickCounter++;
+
+            // Periodic refresh: re-read EMA stats every ~0.25s
+            if (_tickCounter % 15 == 0)
+                RefreshImpactTargets();
+
+            const float speed = 0.12f;
+            const float eps = 0.002f;
+            bool moving = false;
+
+            for (int i = 0; i < _impactBars.Count; i++)
+            {
+                var s = _impactBars[i];
+                if (Math.Abs(s.CurrentFraction - s.TargetFraction) < eps)
+                {
+                    s.CurrentFraction = s.TargetFraction;
+                }
+                else
+                {
+                    s.CurrentFraction += (s.TargetFraction - s.CurrentFraction) * speed;
+                    moving = true;
+                }
+
+                s.Bar.BarSize = s.CurrentFraction;
+                s.Bar.Color = BarColor(s.CurrentFraction);
+                s.PctLabel.Text = s.CurrentFraction >= 0.01f
+                    ? $"{s.CurrentFraction * 100f:F0}%" : "<1%";
+                _impactBars[i] = s;
+            }
+
+            if (_totalSavedLabel != null && _tickCounter % 15 == 0)
+                _totalSavedLabel.Text = Localization.Format("stats_saved", Stats.EstimatedSavedMs());
+
+            if (!moving && _tickCounter > 60)
+                _animActive = false;
         }
 
         private static void PrintSignalGraphAnalysis()

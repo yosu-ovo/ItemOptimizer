@@ -2,7 +2,8 @@ using System;
 using System.Collections.Generic;
 using Barotrauma;
 using ItemOptimizerMod.Patches;
-using ItemOptimizerMod.Proxy;
+using ItemOptimizerMod.SignalGraph;
+using ItemOptimizerMod.World;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -21,7 +22,6 @@ namespace ItemOptimizerMod
         private const int LabelWidth = 80;
 
         private static readonly Color MainThreadColor = new Color(255, 165, 0);   // Orange
-        private static readonly Color ProxyColor = new Color(0, 206, 209);        // DarkTurquoise
 
         public static void Draw(SpriteBatch spriteBatch)
         {
@@ -33,23 +33,18 @@ namespace ItemOptimizerMod
 
             string lineCold = $"{Localization.T("strategy_cold_storage")}: ~{Stats.AvgColdStorageSkips:F0}/frame";
             string lineGnd  = $"{Localization.T("strategy_ground_item")}: ~{Stats.AvgGroundItemSkips:F0}/frame";
-            string lineCi   = $"{Localization.T("strategy_ci_throttle")}: ~{Stats.AvgCustomInterfaceSkips:F0}/frame";
             string lineMot  = $"{Localization.T("strategy_motion")}: ~{Stats.AvgMotionSensorSkips:F0}/frame";
-            string lineWear = $"{Localization.T("strategy_wearable")}: ~{Stats.AvgWearableSkips:F0}/frame";
             string lineRule = $"{Localization.T("stats_item_rules")}: ~{Stats.AvgItemRuleSkips:F0}/frame";
             string lineModOpt = $"{Localization.T("stats_mod_opt")}: ~{Stats.AvgModOptSkips:F0}/frame";
             string lineWd   = $"{Localization.T("stats_water_det")}: ~{Stats.AvgWaterDetectorSkips:F0}/frame";
-            string lineDoor = $"{Localization.T("stats_door")}: ~{Stats.AvgDoorSkips:F0}/frame";
             string lineHst  = $"{Localization.T("stats_hst_cache")}: ~{Stats.AvgHasStatusTagCacheHits:F0}/frame";
-            string lineShud = $"{Localization.T("stats_statushud")}: ~{Stats.AvgStatusHUDSkips:F0}/frame";
-            string lineAffl = $"{Localization.T("stats_affliction")}: ~{Stats.AvgAfflictionDedupSkips:F0}/frame";
             string lineAnimLod = $"{Localization.T("stats_anim_lod")}: ~{Stats.AvgAnimLODSkipped + Stats.AvgAnimLODHalfRate:F0}/frame";
             string lineCharStagger = $"{Localization.T("stats_char_stagger")}: ~{Stats.AvgCharStaggerSkipped:F0}/frame";
             string lineLadderFix = $"{Localization.T("stats_ladder_fix")}: ~{Stats.AvgLadderFixCorrections:F1}/frame";
             string lineSave = Localization.Format("stats_saved", Stats.EstimatedSavedMs());
             string lineMiscP = $"{Localization.T("strategy_misc_parallel")}: {(OptimizerConfig.EnableMiscParallel ? "ON" : "OFF")}";
 
-            string[] lines = { title, sep, lineCold, lineGnd, lineCi, lineMot, lineWear, lineRule, lineModOpt, lineWd, lineDoor, lineHst, lineShud, lineAffl, lineAnimLod, lineCharStagger, lineLadderFix, sep, lineSave, lineMiscP };
+            string[] lines = { title, sep, lineCold, lineGnd, lineMot, lineRule, lineModOpt, lineWd, lineHst, lineAnimLod, lineCharStagger, lineLadderFix, sep, lineSave, lineMiscP };
 
             // Measure panel size
             float maxWidth = 0;
@@ -77,14 +72,13 @@ namespace ItemOptimizerMod
 
                 float mainThreadMs = Stats.AvgPhaseBMainLoopMs;
                 float vanillaMs = Stats.AvgPhaseAMs + Stats.AvgPhaseCMs + Stats.AvgPhaseDMs;
-                float trackedMs = mainThreadMs + vanillaMs
-                    + Stats.AvgProxyBatchComputeMs + Stats.AvgProxySyncBackMs + Stats.AvgProxyPhysicsMs;
+                float trackedMs = mainThreadMs + vanillaMs + Stats.AvgProxyPhysicsMs;
                 float overheadMs = Math.Max(0, Stats.AvgTotalDispatchMs - trackedMs);
                 dispatchTotalLine = string.Format(Localization.T("dispatch_total"),
                     Stats.AvgTotalDispatchMs, overheadMs);
 
-                phaseBreakdown = $"  A:{Stats.AvgPhaseAMs:F1} Proxy:{Stats.AvgPhaseProxyMs:F1} B:{Stats.AvgPhaseBMs:F1} C:{Stats.AvgPhaseCMs:F1} D:{Stats.AvgPhaseDMs:F1}";
-                subPhaseB = $"  B=HST:{Stats.AvgPhaseBPreBuildMs:F2} Cls:{Stats.AvgPhaseBClassifyMs:F1} Loop:{Stats.AvgPhaseBMainLoopMs:F1}";
+                phaseBreakdown = $"  A:{Stats.AvgPhaseAMs:F1} B:{Stats.AvgPhaseBMs:F1} C:{Stats.AvgPhaseCMs:F1} D:{Stats.AvgPhaseDMs:F1}";
+                subPhaseB = $"  B=HST:{Stats.AvgPhaseBPreBuildMs:F2} SG:{Stats.AvgSignalGraphTickMs:F2} NR:{Stats.AvgPhaseBNativeRtMs:F2} Cls:{Stats.AvgPhaseBClassifyMs:F1} Loop:{Stats.AvgPhaseBMainLoopMs:F1}";
 
                 float headerH = font.MeasureString(dispatchHeader).Y + LineSpacing;
                 float barsH = BarHeight + LineSpacing; // single main thread bar
@@ -97,26 +91,49 @@ namespace ItemOptimizerMod
                 if (barSectionWidth > maxWidth) maxWidth = barSectionWidth;
             }
 
-            // If proxy system active, reserve space for proxy section
-            bool showProxy = ProxyRegistry.HasHandlers;
-            float proxySectionHeight = 0;
-            string proxyHeader = "";
-            string proxyItemsLine = "";
+            // If zone system active, reserve space for zone section
+            bool showZone = NativeRuntimeBridge.IsEnabled;
+            float zoneSectionHeight = 0;
+            string zoneInfoLine = "";
 
-            if (showProxy)
+            if (showZone)
             {
-                proxyHeader = Localization.T("section_proxy");
-                proxyItemsLine = string.Format(Localization.T("proxy_items_count"),
-                    Stats.AvgProxyItems, Barotrauma.Item.ItemList.Count);
+                zoneInfoLine = $"Zone: ~{Stats.AvgZoneSkips:F0} dormant + ~{Stats.AvgZonePassiveSkips:F0} passive skips/frame";
+                float lineH = font.MeasureString(zoneInfoLine).Y + LineSpacing;
+                zoneSectionHeight = lineH;
 
-                float headerH = font.MeasureString(proxyHeader).Y + LineSpacing;
-                float barsH = 3 * (BarHeight + LineSpacing); // BatchCompute + SyncBack + PhysMaint
-                float itemsH = font.MeasureString(proxyItemsLine).Y + LineSpacing;
-                proxySectionHeight = headerH + barsH + itemsH;
+                float w = font.MeasureString(zoneInfoLine).X;
+                if (w > maxWidth) maxWidth = w;
+            }
 
-                // Ensure width accommodates label + bar + stats text
-                float barSectionWidth = LabelWidth + BarMaxWidth + 100;
-                if (barSectionWidth > maxWidth) maxWidth = barSectionWidth;
+            // ── Memory diagnostics section ──
+            float memorySectionHeight = 0;
+            string memHeapLine = $"Heap: {Stats.TotalMemoryMB:F1} MB  GC: {Stats.Gen0Count}/{Stats.Gen1Count}/{Stats.Gen2Count}";
+            string memSGLine = "";
+            string memZoneLine = "";
+
+            {
+                float lineH = font.MeasureString(memHeapLine).Y + LineSpacing;
+                memorySectionHeight = lineH; // heap line always shown
+
+                float w = font.MeasureString(memHeapLine).X;
+                if (w > maxWidth) maxWidth = w;
+
+                if (SignalGraph.SignalGraphEvaluator.Mode > 0)
+                {
+                    memSGLine = $"SignalGraph: {Stats.SG_Nodes} nodes, {Stats.SG_Registers} regs";
+                    memorySectionHeight += font.MeasureString(memSGLine).Y + LineSpacing;
+                    w = font.MeasureString(memSGLine).X;
+                    if (w > maxWidth) maxWidth = w;
+                }
+
+                if (showZone)
+                {
+                    memZoneLine = $"Zone: {Stats.Zone_Count} zones ({Stats.Zone_ActiveZones} active), {Stats.Zone_Components} comps";
+                    memorySectionHeight += font.MeasureString(memZoneLine).Y + LineSpacing;
+                    w = font.MeasureString(memZoneLine).X;
+                    if (w > maxWidth) maxWidth = w;
+                }
             }
 
             // If server data available, reserve space for server section
@@ -227,7 +244,7 @@ namespace ItemOptimizerMod
             }
 
             float panelW = maxWidth + Padding * 2;
-            float panelH = totalHeight + dispatchSectionHeight + proxySectionHeight + serverSectionHeight + heldSectionHeight + Padding * 2;
+            float panelH = totalHeight + dispatchSectionHeight + memorySectionHeight + zoneSectionHeight + serverSectionHeight + heldSectionHeight + Padding * 2;
             float panelX = GameMain.GraphicsWidth - panelW - Padding;
             float panelY = Padding;
 
@@ -314,141 +331,44 @@ namespace ItemOptimizerMod
                 y += font.MeasureString(subPhaseB).Y + LineSpacing;
             }
 
-            // ── Proxy system section ──
-            if (showProxy)
+            // ── Memory diagnostics section ──
             {
-                // Section header
+                // Heap line with color coding
+                Color heapColor = Stats.TotalMemoryMB > 2000 ? Color.Red
+                    : Stats.TotalMemoryMB > 1000 ? Color.Yellow : Color.White;
+                // Flash red on Gen2 GC
+                if (Stats.Gen2FlashFrames > 0)
+                    heapColor = (Stats.Gen2FlashFrames & 2) != 0 ? Color.OrangeRed : Color.Red;
+
                 GUI.DrawString(spriteBatch,
                     new Vector2(panelX + Padding, y),
-                    proxyHeader, ProxyColor, font: font);
-                y += font.MeasureString(proxyHeader).Y + LineSpacing;
+                    memHeapLine, heapColor, font: font);
+                y += font.MeasureString(memHeapLine).Y + LineSpacing;
 
-                // Find max ms across proxy bars for normalization
-                float maxMs = Math.Max(0.01f,
-                    Math.Max(Stats.AvgProxyBatchComputeMs,
-                    Math.Max(Stats.AvgProxySyncBackMs, Stats.AvgProxyPhysicsMs)));
-
-                float barX = panelX + Padding + LabelWidth;
-
-                // BatchCompute bar
+                if (!string.IsNullOrEmpty(memSGLine))
                 {
-                    string label = Localization.T("proxy_batch");
-                    float ms = Stats.AvgProxyBatchComputeMs;
-
-                    // Label
                     GUI.DrawString(spriteBatch,
-                        new Vector2(panelX + Padding, y + 1),
-                        label, ProxyColor, font: font);
-
-                    // Bar background
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(BarMaxWidth, BarHeight),
-                        OverlayHelper.BarBgColor, isFilled: true);
-
-                    // Bar fill
-                    float barW = Math.Max(1, (ms / maxMs) * BarMaxWidth);
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(barW, BarHeight),
-                        ProxyColor * 0.8f, isFilled: true);
-
-                    // Bar outline
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(BarMaxWidth, BarHeight),
-                        ProxyColor * 0.4f, isFilled: false);
-
-                    // Stats text
-                    string statsText = $"{ms:F1}ms";
-                    GUI.DrawString(spriteBatch,
-                        new Vector2(barX + BarMaxWidth + 6, y + 1),
-                        statsText, Color.White, font: font);
-
-                    y += BarHeight + LineSpacing;
+                        new Vector2(panelX + Padding, y),
+                        memSGLine, new Color(155, 89, 182), font: font); // purple
+                    y += font.MeasureString(memSGLine).Y + LineSpacing;
                 }
 
-                // SyncBack bar
+                if (!string.IsNullOrEmpty(memZoneLine))
                 {
-                    string label = Localization.T("proxy_sync");
-                    float ms = Stats.AvgProxySyncBackMs;
-
-                    // Label
                     GUI.DrawString(spriteBatch,
-                        new Vector2(panelX + Padding, y + 1),
-                        label, ProxyColor, font: font);
-
-                    // Bar background
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(BarMaxWidth, BarHeight),
-                        OverlayHelper.BarBgColor, isFilled: true);
-
-                    // Bar fill
-                    float barW = Math.Max(1, (ms / maxMs) * BarMaxWidth);
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(barW, BarHeight),
-                        ProxyColor * 0.8f, isFilled: true);
-
-                    // Bar outline
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(BarMaxWidth, BarHeight),
-                        ProxyColor * 0.4f, isFilled: false);
-
-                    // Stats text
-                    string statsText = $"{ms:F1}ms";
-                    GUI.DrawString(spriteBatch,
-                        new Vector2(barX + BarMaxWidth + 6, y + 1),
-                        statsText, Color.White, font: font);
-
-                    y += BarHeight + LineSpacing;
+                        new Vector2(panelX + Padding, y),
+                        memZoneLine, new Color(0, 206, 209), font: font); // cyan
+                    y += font.MeasureString(memZoneLine).Y + LineSpacing;
                 }
+            }
 
-                // PhysMaint bar
-                {
-                    string label = Localization.T("proxy_physics");
-                    float ms = Stats.AvgProxyPhysicsMs;
-
-                    // Label
-                    GUI.DrawString(spriteBatch,
-                        new Vector2(panelX + Padding, y + 1),
-                        label, ProxyColor, font: font);
-
-                    // Bar background
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(BarMaxWidth, BarHeight),
-                        OverlayHelper.BarBgColor, isFilled: true);
-
-                    // Bar fill
-                    float barW = Math.Max(1, (ms / maxMs) * BarMaxWidth);
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(barW, BarHeight),
-                        ProxyColor * 0.8f, isFilled: true);
-
-                    // Bar outline
-                    GUI.DrawRectangle(spriteBatch,
-                        new Vector2(barX, y),
-                        new Vector2(BarMaxWidth, BarHeight),
-                        ProxyColor * 0.4f, isFilled: false);
-
-                    // Stats text
-                    string statsText = $"{ms:F1}ms";
-                    GUI.DrawString(spriteBatch,
-                        new Vector2(barX + BarMaxWidth + 6, y + 1),
-                        statsText, Color.White, font: font);
-
-                    y += BarHeight + LineSpacing;
-                }
-
-                // Items count line
+            // ── Zone system section ──
+            if (showZone)
+            {
                 GUI.DrawString(spriteBatch,
                     new Vector2(panelX + Padding, y),
-                    proxyItemsLine, Color.White, font: font);
-                y += font.MeasureString(proxyItemsLine).Y + LineSpacing;
+                    zoneInfoLine, Color.Cyan, font: font);
+                y += font.MeasureString(zoneInfoLine).Y + LineSpacing;
             }
 
             // ── Server health section ──
