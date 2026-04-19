@@ -12,6 +12,7 @@ namespace ItemOptimizerMod
     static class ModPaths
     {
         private static string _modDir;
+        private static string _userDataDir;
 
         /// <summary>
         /// The mod's root directory on disk (e.g. LocalMods/ItemOptimizer or workshop/content/...).
@@ -74,10 +75,38 @@ namespace ItemOptimizerMod
             return Path.Combine(dir, fileName);
         }
 
+        /// <summary>
+        /// Persistent user data directory that survives mod updates.
+        /// Located under Barotrauma's save folder (%LOCALAPPDATA%/Daedalic Entertainment GmbH/Barotrauma/ItemOptimizer/).
+        /// </summary>
+        internal static string UserDataDir
+        {
+            get
+            {
+                if (_userDataDir != null) return _userDataDir;
+                _userDataDir = Path.Combine(SaveUtil.DefaultSaveFolder, "ItemOptimizer");
+                Directory.CreateDirectory(_userDataDir);
+                return _userDataDir;
+            }
+        }
+
+        /// <summary>Resolve a filename to an absolute path inside the user data directory.</summary>
+        internal static string ResolveUserData(string fileName)
+            => Path.Combine(UserDataDir, fileName);
+
+        /// <summary>Resolve a path inside a subdirectory of the user data directory. Creates the subdirectory if needed.</summary>
+        internal static string ResolveUserDataSubDir(string subDir, string fileName)
+        {
+            var dir = Path.Combine(UserDataDir, subDir);
+            Directory.CreateDirectory(dir);
+            return Path.Combine(dir, fileName);
+        }
+
         /// <summary>Reset cached path (for hot-reload scenarios).</summary>
         internal static void Reset()
         {
             _modDir = null;
+            _userDataDir = null;
         }
     }
 }

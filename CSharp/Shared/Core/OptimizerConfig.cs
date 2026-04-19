@@ -45,16 +45,16 @@ namespace ItemOptimizerMod
         public static int GroundItemSkipFrames = 3;
         public static bool EnableMotionSensorRewrite = true;
         public static bool EnableWaterDetectorRewrite = true;
-        public static bool EnableRelayRewrite = true;
-        public static bool EnablePowerTransferRewrite = true;
-        public static bool EnablePowerContainerRewrite = true;
-        public static bool EnableWireSkip = true;
-        public static bool EnableHasStatusTagCache = true;
+        public static bool EnableRelayRewrite = false;
+        public static bool EnablePowerTransferRewrite = false;
+        public static bool EnablePowerContainerRewrite = false;
+        public static bool EnableWireSkip = false;
+        public static bool EnableHasStatusTagCache = false;
         public static bool EnableHullSpatialIndex = true;   // Hull-based spatial pre-filtering for MotionSensor
 
         // ── Character optimization ──
-        public static bool EnableAnimLOD = true;
-        public static bool EnableCharacterStagger = true;
+        public static bool EnableAnimLOD = false;
+        public static bool EnableCharacterStagger = false;
         public static int CharacterStaggerGroups = 4;
         public static bool EnableLadderFix = true;          // fix ladder climbing desync (client-only)
         public static bool EnablePlatformFix = true;        // fix IgnorePlatforms desync (client-only)
@@ -68,14 +68,14 @@ namespace ItemOptimizerMod
         // ── Client optimization ──
         public static bool EnableInteractionLabelOpt = true;
         public static int InteractionLabelMaxCount = 50; // 10-200
-        public static bool EnableButtonTerminalOpt = true;
+        public static bool EnableButtonTerminalOpt = false;
         public static bool EnablePumpOpt = true;
 
         // Misc entity parallelism (Hull/Structure/Gap/Power — safe, no side effects)
         public static bool EnableMiscParallel = true;
 
         // Signal graph accelerator (0=Off, 1=Accelerate, 2=Aggressive)
-        public static int SignalGraphMode = 2;
+        public static int SignalGraphMode = 1;
 
         // NativeComponent runtime (experimental — default off)
         public static bool EnableNativeRuntime = false;
@@ -222,7 +222,7 @@ namespace ItemOptimizerMod
 
         private static string GetProfileDir()
         {
-            return Path.Combine(ModPaths.ModDir, "Optimizerlist");
+            return Path.Combine(ModPaths.UserDataDir, "Optimizerlist");
         }
 
         internal static string GetProfilePath()
@@ -301,12 +301,47 @@ namespace ItemOptimizerMod
         private static string GetConfigPath()
         {
             if (_configPath != null) return _configPath;
-            _configPath = ModPaths.Resolve("ItemOptimizer_config.xml");
+            _configPath = ModPaths.ResolveUserData("ItemOptimizer_config.xml");
             return _configPath;
+        }
+
+        /// <summary>
+        /// One-time migration: copy config and profiles from mod directory to user data directory.
+        /// This ensures settings survive Steam Workshop mod updates.
+        /// </summary>
+        private static void MigrateFromModDir()
+        {
+            try
+            {
+                var newConfigPath = GetConfigPath();
+                if (!File.Exists(newConfigPath))
+                {
+                    var oldConfigPath = ModPaths.Resolve("ItemOptimizer_config.xml");
+                    if (File.Exists(oldConfigPath))
+                        File.Copy(oldConfigPath, newConfigPath);
+                }
+
+                var newProfileDir = GetProfileDir();
+                if (!Directory.Exists(newProfileDir))
+                {
+                    var oldProfileDir = Path.Combine(ModPaths.ModDir, "Optimizerlist");
+                    if (Directory.Exists(oldProfileDir))
+                    {
+                        Directory.CreateDirectory(newProfileDir);
+                        foreach (var f in Directory.GetFiles(oldProfileDir, "*.xml"))
+                            File.Copy(f, Path.Combine(newProfileDir, Path.GetFileName(f)), false);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Barotrauma.DebugConsole.ThrowError($"[ItemOptimizer] Config migration failed: {e.Message}");
+            }
         }
 
         public static void Load()
         {
+            MigrateFromModDir();
             try
             {
                 var path = GetConfigPath();
