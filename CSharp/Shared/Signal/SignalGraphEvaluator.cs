@@ -253,6 +253,9 @@ namespace ItemOptimizerMod.SignalGraph
                 // Decrement push-capture trace counter
                 if (PushTraceFrames > 0)
                     PushTraceFrames--;
+
+                // Decrement prefix signal trace counter
+                SignalPrefixTrace.DecrementFrame();
             }
             catch (Exception ex)
             {
@@ -456,7 +459,7 @@ namespace ItemOptimizerMod.SignalGraph
                 string srcName = emit.SourceItem?.Name ?? "?";
                 int srcId = emit.SourceItem?.ID ?? -1;
 
-                bool isAccel = targetId >= 0 && _accelerated[targetId];
+                bool isAccel = targetId >= 0 && targetId < 65536 && _accelerated[targetId];
                 var color = isAccel ? Microsoft.Xna.Framework.Color.Red : Microsoft.Xna.Framework.Color.LimeGreen;
 
                 lines.Add(new EmitDiagLine

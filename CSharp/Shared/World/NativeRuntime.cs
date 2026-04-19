@@ -204,7 +204,6 @@ namespace ItemOptimizerMod.World
         /// <summary>Register a NativeComponent with a zone.</summary>
         public void Register(NativeComponent component, Zone zone)
         {
-            component.Host = component.Host; // already set by caller
             component.Zone = zone;
             zone.Components.Add(component);
             component.OnRegistered();
