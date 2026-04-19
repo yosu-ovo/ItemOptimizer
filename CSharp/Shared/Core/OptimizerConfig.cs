@@ -78,7 +78,7 @@ namespace ItemOptimizerMod
         public static int SignalGraphMode = 1;
 
         // NativeComponent runtime (experimental — default off)
-        public static bool EnableNativeRuntime = false;
+        public static bool EnableNativeRuntime = true;
         public static bool EnableZoneSkip = true;  // Skip Item.Update for items in Dormant/Unloaded zones (requires NativeRuntime)
 
         // Spike detector (off by default — adds ~1-2ms overhead when enabled)
@@ -439,7 +439,7 @@ namespace ItemOptimizerMod
                 var nrt = root.Element("NativeRuntime");
                 if (nrt != null)
                 {
-                    EnableNativeRuntime = ParseBool(nrt.Attribute("enabled")?.Value, false);
+                    EnableNativeRuntime = ParseBool(nrt.Attribute("enabled")?.Value, true);
                     EnableZoneSkip = ParseBool(nrt.Attribute("zoneSkip")?.Value, true);
                 }
 
