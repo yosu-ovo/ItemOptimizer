@@ -113,11 +113,25 @@ namespace ItemOptimizerMod.SignalGraph
         private static bool SendSignalIntoConnectionPrefix(Signal signal, Connection conn)
         {
             // Fast path: if graph not active, run vanilla
-            if (!SignalGraphEvaluator.IsCompiled) return true;
+            if (!SignalGraphEvaluator.IsCompiled)
+            {
+                // Still trace if active (graph off but trace on)
+                if (SignalPrefixTrace.IsActive && conn != null)
+                    SignalPrefixTrace.LogIfTracked(conn.Item.ID, conn.Name, signal.value, signal.source, wasBlocked: false);
+                return true;
+            }
 
             // Check if the TARGET item is accelerated — O(1) array lookup
             if (conn == null || !SignalGraphEvaluator.IsAccelerated(conn.Item.ID))
+            {
+                if (SignalPrefixTrace.IsActive && conn != null)
+                    SignalPrefixTrace.LogIfTracked(conn.Item.ID, conn.Name, signal.value, signal.source, wasBlocked: false);
                 return true; // not accelerated, run vanilla
+            }
+
+            // Trace: log captured signal
+            if (SignalPrefixTrace.IsActive)
+                SignalPrefixTrace.LogIfTracked(conn.Item.ID, conn.Name, signal.value, signal.source, wasBlocked: true);
 
             // Push the signal into the capture register for this input connection.
             SignalGraphEvaluator.PushCaptureSignal(conn.Item.ID, conn.Name, signal.value);

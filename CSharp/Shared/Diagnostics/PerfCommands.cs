@@ -1298,6 +1298,163 @@ namespace ItemOptimizerMod
                     }
                 }
             });
+
+            Add("ioruin", "ioruin [trace <frames>]: Diagnose ruin items — dispatch status, signal graph, throttle. 'trace' enables live signal logging.", args =>
+            {
+                // Collect ruin items (items on ruin submarines, identified by HasTag("ruin") or ruin-like identifiers)
+                var ruinItems = new List<(Item item, string status, string detail)>();
+                var ruinSubs = new HashSet<Submarine>();
+                foreach (var sub in Submarine.Loaded)
+                {
+                    if (sub.Info?.Type == SubmarineType.Ruin || sub.Info?.Type == SubmarineType.Outpost
+                        || (sub.Info?.Name != null && sub.Info.Name.Contains("ruin", StringComparison.OrdinalIgnoreCase)))
+                        ruinSubs.Add(sub);
+                }
+
+                // Fallback: find items with "alien" tag or identifier
+                foreach (var item in Item.ItemList)
+                {
+                    bool isRuin = item.Submarine != null && ruinSubs.Contains(item.Submarine);
+                    bool isAlien = item.Prefab?.Identifier.Value != null &&
+                        (item.Prefab.Identifier.Value.StartsWith("alien", StringComparison.OrdinalIgnoreCase)
+                         || item.Prefab.Identifier.Value.Contains("ruin", StringComparison.OrdinalIgnoreCase));
+                    if (!isRuin && !isAlien) continue;
+
+                    bool accel = SignalGraphEvaluator.IsAccelerated((ushort)item.ID);
+                    bool isWire = item.GetComponent<Wire>() != null && item.Components.Count <= 3;
+                    bool inInventory = item.ParentInventory != null;
+
+                    // Determine dispatch status
+                    string status;
+                    string detail;
+                    if (accel)
+                    {
+                        status = "ACCEL";
+                        detail = "Update() skipped, graph handles signals";
+                    }
+                    else if (isWire)
+                    {
+                        status = "WIRE";
+                        detail = "Pure wire, Update skipped";
+                    }
+                    else
+                    {
+                        // Check ground throttle eligibility
+                        bool hasCritical = false;
+                        foreach (var ic in item.Components)
+                        {
+                            if (ic is Reactor || ic is Engine || ic is Steering || ic is DockingPort || ic is ElectricalDischarger)
+                            { hasCritical = true; break; }
+                            if ((ic is Pump || ic is Door || ic is PowerTransfer || ic is OxygenGenerator
+                                || ic is Turret || ic is Controller || ic is TriggerComponent) && ic.IsActive)
+                            { hasCritical = true; break; }
+                            if ((ic is Fabricator || ic is Deconstructor) && ic.IsActive)
+                            { hasCritical = true; break; }
+                        }
+
+                        if (!inInventory && !hasCritical)
+                        {
+                            status = "GROUND_THROTTLE";
+                            detail = $"ParentInv=null, no active critical component, throttle={OptimizerConfig.GroundItemSkipFrames}";
+                        }
+                        else
+                        {
+                            status = "NORMAL";
+                            detail = hasCritical ? "Has active critical component" : (inInventory ? "In inventory" : "Normal update");
+                        }
+                    }
+
+                    // Zone tier
+                    string zoneTier = "N/A";
+                    if (item.Submarine != null)
+                    {
+                        byte tier = World.NativeRuntimeBridge.SubZoneTier[item.Submarine.ID & 0xFFFF];
+                        zoneTier = ((World.ZoneTier)tier).ToString();
+                    }
+
+                    ruinItems.Add((item, status, $"{detail} | zone={zoneTier}"));
+                }
+
+                if (ruinItems.Count == 0)
+                {
+                    DebugConsole.NewMessage("[ItemOptimizer] No ruin/alien items found.", Color.Red);
+                    return;
+                }
+
+                // Enable trace mode if requested
+                if (args.Length > 0 && args[0].Equals("trace", StringComparison.OrdinalIgnoreCase))
+                {
+                    int frames = 120;
+                    if (args.Length > 1 && int.TryParse(args[1], out int f)) frames = f;
+
+                    // Collect ruin item IDs for prefix trace
+                    var traceIds = new HashSet<ushort>();
+                    foreach (var (item, _, _) in ruinItems)
+                    {
+                        if (item.Prefab?.Identifier.Value != null &&
+                            (item.Prefab.Identifier.Value.Contains("currentgenerator", StringComparison.OrdinalIgnoreCase)
+                             || item.Prefab.Identifier.Value.Contains("terminal", StringComparison.OrdinalIgnoreCase)
+                             || item.Prefab.Identifier.Value.Contains("signalcheck", StringComparison.OrdinalIgnoreCase)
+                             || item.Prefab.Identifier.Value.Contains("notcomponent", StringComparison.OrdinalIgnoreCase)))
+                            traceIds.Add((ushort)item.ID);
+                    }
+                    SignalPrefixTrace.Start(traceIds, frames);
+                    SignalGraphEvaluator.EmitTraceFrames = frames;
+                    SignalGraphEvaluator.EmitTraceTargetId = -1;
+                    SignalGraphEvaluator.PushTraceFrames = frames;
+                    DebugConsole.NewMessage($"[ItemOptimizer] Ruin signal trace: {frames} frames, tracking {traceIds.Count} items", Color.Yellow);
+                    DebugConsole.NewMessage("[ItemOptimizer] Traces: Prefix (all signals to/from traced items), Emit (graph output), PushCapture (graph input)", Color.Yellow);
+                }
+
+                // Display results
+                DebugConsole.NewMessage($"[ItemOptimizer] ── Ruin Items ({ruinItems.Count}) ──", Color.Cyan);
+
+                // Sort by status for readability
+                ruinItems.Sort((a, b) => string.Compare(a.status, b.status, StringComparison.Ordinal));
+
+                int shown = 0;
+                foreach (var (item, status, detail) in ruinItems)
+                {
+                    if (shown >= 60) { DebugConsole.NewMessage($"  ... and {ruinItems.Count - shown} more", Color.Gray); break; }
+
+                    var color = status switch
+                    {
+                        "ACCEL" => Color.Yellow,
+                        "GROUND_THROTTLE" => Color.Orange,
+                        "WIRE" => Color.Gray,
+                        _ => Color.White
+                    };
+
+                    string components = "";
+                    foreach (var ic in item.Components)
+                    {
+                        if (ic is ConnectionPanel || ic is Holdable || ic is Wire || ic is ItemContainer) continue;
+                        if (components.Length > 0) components += ",";
+                        components += ic.GetType().Name;
+                        if (!ic.IsActive) components += "(off)";
+                    }
+
+                    DebugConsole.NewMessage(
+                        $"  #{item.ID} {item.Prefab?.Identifier.Value ?? "?"} [{status}] {components} | {detail}",
+                        color);
+                    shown++;
+                }
+
+                // Summary
+                int accelCount = 0, throttleCount = 0, normalCount = 0, wireCount = 0;
+                foreach (var (_, status, _) in ruinItems)
+                {
+                    switch (status)
+                    {
+                        case "ACCEL": accelCount++; break;
+                        case "GROUND_THROTTLE": throttleCount++; break;
+                        case "WIRE": wireCount++; break;
+                        default: normalCount++; break;
+                    }
+                }
+                DebugConsole.NewMessage($"[ItemOptimizer] Summary: {accelCount} accelerated, {throttleCount} ground-throttled, {normalCount} normal, {wireCount} wire", Color.Cyan);
+                DebugConsole.NewMessage($"[ItemOptimizer] Ruin subs found: {ruinSubs.Count} ({string.Join(", ", ruinSubs.Select(s => $"\"{s.Info?.Name}\" ID={s.ID}"))})", Color.Cyan);
+            });
         }
 
         internal static void Unregister()
