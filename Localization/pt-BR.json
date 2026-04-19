@@ -21,7 +21,7 @@
   "strategy_ground_item": "Limitador de Item no Chão",
   "strategy_ground_item_desc": "Reduz a frequência de atualização de items no chão",
   "strategy_zone_dispatch": "Despacho por zonas",
-  "strategy_zone_dispatch_desc": "Carregamento dinâmico para destroços, ruínas, postos avançados, etc. Zonas distantes são congeladas. Requer NativeRuntime.",
+  "strategy_zone_dispatch_desc": "Carregamento dinâmico para destroços, ruínas, postos avançados, etc. Zonas distantes são congeladas.",
   "strategy_hst_cache": "Cache de Tag de Status",
   "strategy_hst_cache_desc": "Armazena em cache os resultados de consulta de tags de status para evitar varreduras repetidas",
   "strategy_wire_skip": "Ignorar Fio",
@@ -133,6 +133,8 @@
   "whitelist_add": "Insira o identificador do item...",
   "whitelist_add_btn": "+ Adicionar",
   "whitelist_remove": "Remover",
+  "btn_whitelist": "+ Whitelist",
+  "btn_unwhitelist": "- Whitelist",
   "whitelist_empty": "Lista branca vazia",
 
   "overlay_toggle": "Overlay de Estatísticas do HUD",

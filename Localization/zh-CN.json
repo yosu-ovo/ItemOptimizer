@@ -21,7 +21,7 @@
   "strategy_ground_item": "地面物品节流",
   "strategy_ground_item_desc": "降低地面散落物品的更新频率",
   "strategy_zone_dispatch": "区域调度",
-  "strategy_zone_dispatch_desc": "沉船、遗迹、站点等会动态加载，较远区域将被冻结。需要NativeRuntime。",
+  "strategy_zone_dispatch_desc": "沉船、遗迹、站点等会动态加载，较远区域将被冻结。",
   "strategy_hst_cache": "状态标签缓存",
   "strategy_hst_cache_desc": "缓存物品状态标签查询结果，避免重复扫描",
   "strategy_wire_skip": "电线跳过",
@@ -133,6 +133,8 @@
   "whitelist_add": "输入物品标识符...",
   "whitelist_add_btn": "+ 添加",
   "whitelist_remove": "移除",
+  "btn_whitelist": "+ 白名单",
+  "btn_unwhitelist": "- 白名单",
   "whitelist_empty": "白名单为空",
 
   "overlay_toggle": "HUD 统计叠加层",

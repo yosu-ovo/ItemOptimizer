@@ -21,7 +21,7 @@
   "strategy_ground_item": "Boden-Drosselung",
   "strategy_ground_item_desc": "Updatefrequenz für Gegenstände am Boden reduzieren",
   "strategy_zone_dispatch": "Zonen-Steuerung",
-  "strategy_zone_dispatch_desc": "Dynamisches Laden für Wracks, Ruinen, Außenposten usw. Entfernte Zonen werden eingefroren. Erfordert NativeRuntime.",
+  "strategy_zone_dispatch_desc": "Dynamisches Laden für Wracks, Ruinen, Außenposten usw. Entfernte Zonen werden eingefroren.",
   "strategy_hst_cache": "Status-Tag-Cache",
   "strategy_hst_cache_desc": "Status-Tag-Abfrageergebnisse zwischenspeichern, um wiederholte Scans zu vermeiden",
   "strategy_wire_skip": "Kabel überspringen",
@@ -133,6 +133,8 @@
   "whitelist_add": "Gegenstandskennung eingeben...",
   "whitelist_add_btn": "+ Hinzufügen",
   "whitelist_remove": "Entfernen",
+  "btn_whitelist": "+ Whitelist",
+  "btn_unwhitelist": "- Whitelist",
   "whitelist_empty": "Whitelist ist leer",
 
   "overlay_toggle": "HUD-Statistik-Overlay",

@@ -21,7 +21,7 @@
   "strategy_ground_item": "Ograniczanie Przedmiotów na Ziemi",
   "strategy_ground_item_desc": "Zmniejsza częstotliwość aktualizacji przedmiotów leżących na ziemi",
   "strategy_zone_dispatch": "Zarządzanie strefami",
-  "strategy_zone_dispatch_desc": "Dynamiczne ładowanie wraków, ruin, placówek itp. Odległe strefy są zamrażane. Wymaga NativeRuntime.",
+  "strategy_zone_dispatch_desc": "Dynamiczne ładowanie wraków, ruin, placówek itp. Odległe strefy są zamrażane.",
   "strategy_hst_cache": "Cache Tagów Statusu",
   "strategy_hst_cache_desc": "Buforuje wyniki zapytań tagów statusu, aby uniknąć powtarzających się skanów",
   "strategy_wire_skip": "Pomijanie Przewodów",
@@ -133,6 +133,8 @@
   "whitelist_add": "Wpisz identyfikator przedmiotu...",
   "whitelist_add_btn": "+ Dodaj",
   "whitelist_remove": "Usuń",
+  "btn_whitelist": "+ Whitelist",
+  "btn_unwhitelist": "- Whitelist",
   "whitelist_empty": "Biała lista jest pusta",
 
   "overlay_toggle": "Nakładka Statystyk HUD",

@@ -21,7 +21,7 @@
   "strategy_ground_item": "Ground Item Throttle",
   "strategy_ground_item_desc": "Reduce update frequency for items on the ground",
   "strategy_zone_dispatch": "Zone Dispatch",
-  "strategy_zone_dispatch_desc": "Dynamic loading for wrecks, ruins, outposts etc. Distant zones are frozen. Requires NativeRuntime.",
+  "strategy_zone_dispatch_desc": "Dynamic loading for wrecks, ruins, outposts etc. Distant zones are frozen.",
   "strategy_hst_cache": "Status Tag Cache",
   "strategy_hst_cache_desc": "Cache status tag query results to avoid repeated scans",
   "strategy_wire_skip": "Wire Skip",
@@ -133,6 +133,8 @@
   "whitelist_add": "Enter item identifier...",
   "whitelist_add_btn": "+ Add",
   "whitelist_remove": "Remove",
+  "btn_whitelist": "+ Whitelist",
+  "btn_unwhitelist": "- Whitelist",
   "whitelist_empty": "Whitelist is empty",
 
   "overlay_toggle": "HUD Stats Overlay",

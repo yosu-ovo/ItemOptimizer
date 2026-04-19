@@ -21,7 +21,7 @@
   "strategy_ground_item": "Троттлинг предметов на полу",
   "strategy_ground_item_desc": "Снижение частоты обновлений для предметов на полу",
   "strategy_zone_dispatch": "Зональная диспетчеризация",
-  "strategy_zone_dispatch_desc": "Динамическая загрузка обломков, руин, аванпостов и т.д. Далёкие зоны замораживаются. Требуется NativeRuntime.",
+  "strategy_zone_dispatch_desc": "Динамическая загрузка обломков, руин, аванпостов и т.д. Далёкие зоны замораживаются.",
   "strategy_hst_cache": "Кэш тегов статуса",
   "strategy_hst_cache_desc": "Кэширование запросов тегов статуса для избежания повторных сканирований",
   "strategy_wire_skip": "Пропуск проводов",
@@ -133,6 +133,8 @@
   "whitelist_add": "Введите идентификатор предмета...",
   "whitelist_add_btn": "+ Добавить",
   "whitelist_remove": "Убрать",
+  "btn_whitelist": "+ Белый список",
+  "btn_unwhitelist": "- Белый список",
   "whitelist_empty": "Белый список пуст",
 
   "overlay_toggle": "HUD оверлей статистики",

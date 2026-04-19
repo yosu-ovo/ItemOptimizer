@@ -21,7 +21,7 @@
   "strategy_ground_item": "地面物品節流",
   "strategy_ground_item_desc": "降低地面散落物品的更新頻率",
   "strategy_zone_dispatch": "區域調度",
-  "strategy_zone_dispatch_desc": "針對沉船、遺跡、前哨站等的動態載入。遠距區域將被凍結。需要NativeRuntime。",
+  "strategy_zone_dispatch_desc": "針對沉船、遺跡、前哨站等的動態載入。遠距區域將被凍結。",
   "strategy_hst_cache": "狀態標籤快取",
   "strategy_hst_cache_desc": "快取物品狀態標籤查詢結果，避免重複掃描",
   "strategy_wire_skip": "電線跳過",
@@ -133,6 +133,8 @@
   "whitelist_add": "輸入物品識別碼...",
   "whitelist_add_btn": "+ 新增",
   "whitelist_remove": "移除",
+  "btn_whitelist": "+ 白名單",
+  "btn_unwhitelist": "- 白名單",
   "whitelist_empty": "白名單為空",
 
   "overlay_toggle": "HUD 統計疊加層",

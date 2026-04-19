@@ -736,6 +736,40 @@ namespace ItemOptimizerMod
                     }
                 };
             }
+
+            // Quick whitelist toggle button
+            if (isWhitelisted)
+            {
+                new GUIButton(
+                    new RectTransform(new Vector2(0.10f, 1f), itemRow.RectTransform),
+                    Localization.T("btn_unwhitelist"), Alignment.Center, "GUIButtonSmall")
+                {
+                    OnClicked = (btn, ud) =>
+                    {
+                        OptimizerConfig.Whitelist.Remove(capturedItem.Identifier);
+                        OptimizerConfig.RebuildWhitelistLookup();
+                        OptimizerConfig.AutoSave();
+                        Rebuild();
+                        return true;
+                    }
+                };
+            }
+            else
+            {
+                new GUIButton(
+                    new RectTransform(new Vector2(0.10f, 1f), itemRow.RectTransform),
+                    Localization.T("btn_whitelist"), Alignment.Center, "GUIButtonSmall")
+                {
+                    OnClicked = (btn, ud) =>
+                    {
+                        OptimizerConfig.Whitelist.Add(capturedItem.Identifier);
+                        OptimizerConfig.RebuildWhitelistLookup();
+                        OptimizerConfig.AutoSave();
+                        Rebuild();
+                        return true;
+                    }
+                };
+            }
         }
     }
 }

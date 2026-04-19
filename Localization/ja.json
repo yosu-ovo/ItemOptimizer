@@ -21,7 +21,7 @@
   "strategy_ground_item": "落下アイテム間引き",
   "strategy_ground_item_desc": "床に落ちているアイテムの更新頻度を低減",
   "strategy_zone_dispatch": "ゾーン調整",
-  "strategy_zone_dispatch_desc": "沈没船・遺跡・前哨基地などの動的ロード。遠方のゾーンは凍結されます。NativeRuntime必須。",
+  "strategy_zone_dispatch_desc": "沈没船・遺跡・前哨基地などの動的ロード。遠方のゾーンは凍結されます。",
   "strategy_hst_cache": "ステータスタグキャッシュ",
   "strategy_hst_cache_desc": "ステータスタグの検索結果をキャッシュし、重複スキャンを回避",
   "strategy_wire_skip": "ワイヤースキップ",
@@ -133,6 +133,8 @@
   "whitelist_add": "アイテム識別子を入力...",
   "whitelist_add_btn": "+ 追加",
   "whitelist_remove": "削除",
+  "btn_whitelist": "+ ホワイトリスト",
+  "btn_unwhitelist": "- ホワイトリスト",
   "whitelist_empty": "ホワイトリストは空です",
 
   "overlay_toggle": "HUD 統計オーバーレイ",

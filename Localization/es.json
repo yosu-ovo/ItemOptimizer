@@ -21,7 +21,7 @@
   "strategy_ground_item": "Limitación en suelo",
   "strategy_ground_item_desc": "Reducir la frecuencia de actualización de objetos en el suelo",
   "strategy_zone_dispatch": "Despacho por zonas",
-  "strategy_zone_dispatch_desc": "Carga dinámica para naufragios, ruinas, avanzadas, etc. Las zonas lejanas se congelan. Requiere NativeRuntime.",
+  "strategy_zone_dispatch_desc": "Carga dinámica para naufragios, ruinas, avanzadas, etc. Las zonas lejanas se congelan.",
   "strategy_hst_cache": "Caché de etiquetas de estado",
   "strategy_hst_cache_desc": "Almacenar en caché los resultados de consultas de etiquetas para evitar escaneos repetidos",
   "strategy_wire_skip": "Omitir cables",
@@ -133,6 +133,8 @@
   "whitelist_add": "Ingrese identificador de objeto...",
   "whitelist_add_btn": "+ Agregar",
   "whitelist_remove": "Eliminar",
+  "btn_whitelist": "+ Whitelist",
+  "btn_unwhitelist": "- Whitelist",
   "whitelist_empty": "La lista blanca está vacía",
 
   "overlay_toggle": "Overlay de estadísticas HUD",

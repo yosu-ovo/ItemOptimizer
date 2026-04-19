@@ -21,7 +21,7 @@
   "strategy_ground_item": "Limitation objets au sol",
   "strategy_ground_item_desc": "Réduire la fréquence de mise à jour des objets au sol",
   "strategy_zone_dispatch": "Répartition par zones",
-  "strategy_zone_dispatch_desc": "Chargement dynamique pour les épaves, ruines, avant-postes, etc. Les zones éloignées sont gelées. Nécessite NativeRuntime.",
+  "strategy_zone_dispatch_desc": "Chargement dynamique pour les épaves, ruines, avant-postes, etc. Les zones éloignées sont gelées.",
   "strategy_hst_cache": "Cache des tags de statut",
   "strategy_hst_cache_desc": "Mettre en cache les résultats de requête de tags pour éviter les scans répétés",
   "strategy_wire_skip": "Ignorer les câbles",
@@ -133,6 +133,8 @@
   "whitelist_add": "Entrez l'identifiant de l'objet...",
   "whitelist_add_btn": "+ Ajouter",
   "whitelist_remove": "Retirer",
+  "btn_whitelist": "+ Whitelist",
+  "btn_unwhitelist": "- Whitelist",
   "whitelist_empty": "La liste blanche est vide",
 
   "overlay_toggle": "Overlay stats HUD",

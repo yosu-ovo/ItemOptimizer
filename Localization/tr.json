@@ -21,7 +21,7 @@
   "strategy_ground_item": "Yerdeki Eşya Kısıtlama",
   "strategy_ground_item_desc": "Yerde duran eşyaların güncelleme sıklığını azaltır",
   "strategy_zone_dispatch": "Bölge Yönetimi",
-  "strategy_zone_dispatch_desc": "Batıklar, harabeler, ileri karakollar vb. için dinamik yükleme. Uzak bölgeler dondurulur. NativeRuntime gerektirir.",
+  "strategy_zone_dispatch_desc": "Batıklar, harabeler, ileri karakollar vb. için dinamik yükleme. Uzak bölgeler dondurulur.",
   "strategy_hst_cache": "Durum Etiketi Önbelleği",
   "strategy_hst_cache_desc": "Tekrarlanan taramaları önlemek için durum etiketi sorgu sonuçlarını önbelleğe alır",
   "strategy_wire_skip": "Kablo Atlama",
@@ -133,6 +133,8 @@
   "whitelist_add": "Eşya tanımlayıcısı girin...",
   "whitelist_add_btn": "+ Ekle",
   "whitelist_remove": "Kaldır",
+  "btn_whitelist": "+ Whitelist",
+  "btn_unwhitelist": "- Whitelist",
   "whitelist_empty": "Beyaz liste boş",
 
   "overlay_toggle": "HUD İstatistik Katmanı",

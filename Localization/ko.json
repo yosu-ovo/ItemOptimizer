@@ -21,7 +21,7 @@
   "strategy_ground_item": "바닥 아이템 쓰로틀",
   "strategy_ground_item_desc": "바닥에 떨어진 아이템의 업데이트 빈도를 감소",
   "strategy_zone_dispatch": "존 디스패치",
-  "strategy_zone_dispatch_desc": "난파선, 유적, 전초기지 등의 동적 로딩. 먼 존은 동결됩니다. NativeRuntime 필요.",
+  "strategy_zone_dispatch_desc": "난파선, 유적, 전초기지 등의 동적 로딩. 먼 존은 동결됩니다.",
   "strategy_hst_cache": "상태 태그 캐시",
   "strategy_hst_cache_desc": "상태 태그 조회 결과를 캐시하여 반복 스캔 방지",
   "strategy_wire_skip": "와이어 건너뛰기",
@@ -133,6 +133,8 @@
   "whitelist_add": "아이템 식별자 입력...",
   "whitelist_add_btn": "+ 추가",
   "whitelist_remove": "제거",
+  "btn_whitelist": "+ 화이트리스트",
+  "btn_unwhitelist": "- 화이트리스트",
   "whitelist_empty": "화이트리스트가 비어 있습니다",
 
   "overlay_toggle": "HUD 통계 오버레이",
