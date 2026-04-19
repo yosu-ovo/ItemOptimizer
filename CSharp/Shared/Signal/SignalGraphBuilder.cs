@@ -190,12 +190,27 @@ namespace ItemOptimizerMod.SignalGraph
             // Initialize CB reflection (needed for boundary tracing)
             InitCBReflection();
 
-            // Allocate registers for accelerated items' outputs
+            // Allocate registers for accelerated items' outputs.
+            // IMPORTANT: Only allocate for connections that the graph evaluator actually writes.
+            // PartialOnly nodes (e.g. Relay) have extra outputs like state_out/power_value_out
+            // that are emitted by vanilla Update(), not by the graph. If we allocate registers
+            // for those, downstream nodes get internal edges to never-written registers instead
+            // of capture edges that correctly receive the vanilla Update() signals.
             foreach (var (id, (item, comp, type)) in candidates)
             {
+                var graphOutputNames = GetOutputConnectionNames(type);
                 foreach (var conn in item.Connections)
                 {
                     if (!conn.IsOutput) continue;
+
+                    // Only allocate registers for connections the graph evaluator handles
+                    bool isGraphOutput = false;
+                    foreach (var name in graphOutputNames)
+                    {
+                        if (conn.Name == name) { isGraphOutput = true; break; }
+                    }
+                    if (!isGraphOutput) continue;
+
                     var key = (id, conn.Name);
                     if (!regMap.ContainsKey(key))
                     {

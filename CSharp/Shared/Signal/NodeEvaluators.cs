@@ -438,7 +438,9 @@ namespace ItemOptimizerMod.SignalGraph
             float tf = _eq_timeFrame[si];
             int received = (_eq_tsr0[si] <= tf ? 1 : 0) + (_eq_tsr1[si] <= tf ? 1 : 0);
 
-            bool state = received >= 2 && _eq_recv0[si] == _eq_recv1[si];
+            // Vanilla EqualsComponent: sendOutput = true if ANY input within timeFrame,
+            // then compares stored values (including stale ones). We match this: >= 1.
+            bool state = received >= 1 && _eq_recv0[si] == _eq_recv1[si];
             string output = state ? _eq_output[si] : _eq_falseOutput[si];
             if (outRegs[0] >= 0)
                 regs[outRegs[0]] = string.IsNullOrEmpty(output) ? null : output;
@@ -476,7 +478,9 @@ namespace ItemOptimizerMod.SignalGraph
             float tf = _gt_timeFrame[si];
             int received = (_gt_tsr0[si] <= tf ? 1 : 0) + (_gt_tsr1[si] <= tf ? 1 : 0);
 
-            bool state = received >= 2 && _gt_val0[si] > _gt_val1[si];
+            // Vanilla GreaterComponent: sendOutput = true if ANY input within timeFrame,
+            // then compares stored float values. We match this: >= 1.
+            bool state = received >= 1 && _gt_val0[si] > _gt_val1[si];
             string output = state ? _gt_output[si] : _gt_falseOutput[si];
             if (outRegs[0] >= 0)
                 regs[outRegs[0]] = string.IsNullOrEmpty(output) ? null : output;
@@ -510,14 +514,22 @@ namespace ItemOptimizerMod.SignalGraph
             if (!float.TryParse(_arith_recv0[si], NumberStyles.Any, CultureInfo.InvariantCulture, out float a)) a = 0f;
             if (!float.TryParse(_arith_recv1[si], NumberStyles.Any, CultureInfo.InvariantCulture, out float b)) b = 0f;
 
+            // Vanilla DivideComponent: NearlyEqual(signal2, 0) → NaN → fails IsValid → no output
             float result = type switch
             {
                 SignalNodeType.Arith_Add => a + b,
                 SignalNodeType.Arith_Sub => a - b,
                 SignalNodeType.Arith_Mul => a * b,
-                SignalNodeType.Arith_Div => b != 0f ? a / b : 0f,
+                SignalNodeType.Arith_Div => MathUtils.NearlyEqual(b, 0f) ? float.NaN : a / b,
                 _ => 0f
             };
+
+            // Vanilla ArithmeticComponent: if (!MathUtils.IsValid(output)) → no SendSignal
+            if (!MathUtils.IsValid(result))
+            {
+                if (outRegs[0] >= 0) regs[outRegs[0]] = null;
+                return;
+            }
 
             float cMin = _arith_clampMin[si];
             float cMax = _arith_clampMax[si];
@@ -563,7 +575,8 @@ namespace ItemOptimizerMod.SignalGraph
             }
             else
             {
-                if (outRegs[0] >= 0) regs[outRegs[0]] = input;
+                // Vanilla FunctionComponent: if (!float.TryParse(...)) return; → no output
+                if (outRegs[0] >= 0) regs[outRegs[0]] = null;
             }
         }
 
