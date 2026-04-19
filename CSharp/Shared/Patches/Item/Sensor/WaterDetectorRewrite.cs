@@ -132,8 +132,11 @@ namespace ItemOptimizerMod.Patches
             ref var cc = ref ResolveConnections(__instance);
 
             // ── Frame-skip throttle ──
+            // First frame (FrameCounter == 0) always runs full computation
+            // to initialize replay state before any skip frame can occur.
+            bool isRealFrame = state.FrameCounter == 0
+                || (state.FrameCounter % OptimizerConfig.WaterDetectorSkipFrames) == 0;
             state.FrameCounter++;
-            bool isRealFrame = (state.FrameCounter % OptimizerConfig.WaterDetectorSkipFrames) == 0;
 
             if (isRealFrame)
             {
@@ -207,6 +210,7 @@ namespace ItemOptimizerMod.Patches
             }
 
             // ── Send signals every frame (using cached values + cached connections) ──
+            // Vanilla: signal_out only sent if non-empty; water_% and high_pressure sent unconditionally.
             if (!string.IsNullOrEmpty(state.LastSignalOut))
             {
                 if (cc.SignalOut != null)
@@ -223,13 +227,12 @@ namespace ItemOptimizerMod.Patches
                     item.SendSignal(state.LastWaterPct, "water_%");
             }
 
-            if (state.LastHighPressure != null)
-            {
-                if (cc.HighPressure != null)
-                    item.SendSignal(new Signal(state.LastHighPressure, source: item), cc.HighPressure);
-                else
-                    item.SendSignal(state.LastHighPressure, "high_pressure");
-            }
+            // Vanilla sends high_pressure unconditionally every frame
+            string hp = state.LastHighPressure ?? "0";
+            if (cc.HighPressure != null)
+                item.SendSignal(new Signal(hp, source: item), cc.HighPressure);
+            else
+                item.SendSignal(hp, "high_pressure");
 
             return false;
         }

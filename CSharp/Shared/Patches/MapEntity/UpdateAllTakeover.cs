@@ -451,10 +451,13 @@ namespace ItemOptimizerMod.Patches
                     }
 
                     // Strategy 2: Ground Item Throttle
+                    // Items with wired connections are part of a circuit — throttling them
+                    // breaks signal continuity (e.g. water detector → inverted OR → auto-door disable).
                     if (_hasGroundItem && item.ParentInventory == null
                         && !OptimizerConfig.WhitelistLookup.Contains(
                             item.Prefab?.Identifier.Value ?? "")
-                        && !HasActiveCriticalComponent(item))
+                        && !HasActiveCriticalComponent(item)
+                        && !HasWireConnections(item))
                     {
                         int gid = item.ID;
                         ThrottleCounters[gid]++;

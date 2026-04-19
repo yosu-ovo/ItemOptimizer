@@ -1,4 +1,4 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<contentpackage name="ItemOptimizer" modversion="1.0.25" corepackage="False" steamworkshopid="3706355579" gameversion="1.12.6.2">
+<contentpackage name="ItemOptimizer" modversion="1.0.26" corepackage="False" steamworkshopid="3706355579" gameversion="1.12.6.2">
   <Item file="%ModDir%/Items/proxy_items.xml" />
 </contentpackage>
