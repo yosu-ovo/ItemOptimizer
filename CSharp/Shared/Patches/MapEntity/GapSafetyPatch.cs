@@ -61,7 +61,7 @@ namespace ItemOptimizerMod.Patches
                 try { action(); }
                 catch (Exception e)
                 {
-                    LuaCsLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
+                    SafeLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
                 }
             }
         }

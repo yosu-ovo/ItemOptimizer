@@ -353,7 +353,23 @@ namespace ItemOptimizerMod
 
             StrategyTickBox(content, "strategy_allow_sync", "strategy_allow_sync_desc",
                 OptimizerConfig.AllowClientSync,
-                v => { OptimizerConfig.AllowClientSync = v; OptimizerConfig.AutoSave(); });
+                v =>
+                {
+                    OptimizerConfig.AllowClientSync = v;
+                    OptimizerConfig.AutoSave();
+                    // Sync to server so the flag takes effect immediately
+                    try
+                    {
+                        var networking = LuaCsSetup.Instance?.Networking;
+                        if (networking != null)
+                        {
+                            var msg = networking.Start("ItemOpt.SyncCfg");
+                            msg.WriteBoolean(v);
+                            networking.Send(msg);
+                        }
+                    }
+                    catch (Exception) { /* not connected — local toggle only */ }
+                });
 
             // Server perf overlay toggle
             new GUITickBox(

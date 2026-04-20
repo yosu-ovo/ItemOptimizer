@@ -3,8 +3,6 @@ using System.Runtime.CompilerServices;
 using Barotrauma;
 using Barotrauma.Items.Components;
 using HarmonyLib;
-using Microsoft.Xna.Framework;
-using System.Reflection;
 
 namespace ItemOptimizerMod.Patches
 {
@@ -52,31 +50,7 @@ namespace ItemOptimizerMod.Patches
         }
         private static readonly ReplayState[] States = new ReplayState[65536];
 
-        private static MethodInfo _originalMethod;
-        private static HarmonyMethod _prefixMethod;
-        internal static bool IsRegistered { get; private set; }
-
-        internal static void Register(Harmony harmony)
-        {
-            _originalMethod = AccessTools.Method(typeof(WaterDetector), nameof(WaterDetector.Update));
-            if (_originalMethod == null)
-            {
-                LuaCsLogger.LogError("[ItemOptimizer] WaterDetectorRewrite: could not find WaterDetector.Update");
-                return;
-            }
-
-            _prefixMethod = new HarmonyMethod(AccessTools.Method(typeof(WaterDetectorRewrite), nameof(Prefix)));
-            harmony.Patch(_originalMethod, prefix: _prefixMethod);
-            IsRegistered = true;
-            LuaCsLogger.Log("[ItemOptimizer] WaterDetectorRewrite registered");
-        }
-
-        internal static void Unregister(Harmony harmony)
-        {
-            if (_originalMethod != null && _prefixMethod != null)
-                harmony.Unpatch(_originalMethod, _prefixMethod.method);
-            IsRegistered = false;
-        }
+        internal static bool IsRegistered => true; // dispatched via ComponentDispatchTranspiler
 
         /// <summary>Reset cached state (called on round end / mod reload).</summary>
         internal static void Reset()
@@ -120,11 +94,15 @@ namespace ItemOptimizerMod.Patches
 
         /// <summary>
         /// Complete replacement for WaterDetector.Update().
-        /// Returns false to skip the original method.
+        /// Called from ComponentDispatchTranspiler.DispatchUpdate.
         /// </summary>
-        public static bool Prefix(WaterDetector __instance, float deltaTime)
+        internal static void Execute(WaterDetector __instance, float deltaTime)
         {
-            if (!OptimizerConfig.EnableWaterDetectorRewrite) return true;
+            if (!OptimizerConfig.EnableWaterDetectorRewrite)
+            {
+                __instance.Update(deltaTime, null);
+                return;
+            }
 
             var item = __instance.item;
             int id = item.ID;
@@ -234,7 +212,6 @@ namespace ItemOptimizerMod.Patches
             else
                 item.SendSignal(hp, "high_pressure");
 
-            return false;
         }
     }
 }

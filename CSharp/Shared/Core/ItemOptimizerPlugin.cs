@@ -21,14 +21,13 @@ namespace ItemOptimizerMod
 
         // Cached method references for manual patching
         private static MethodInfo hasStatusTagOriginal;
-        private static MethodInfo btUpdateOriginal;
         private static MethodInfo pumpUpdateOriginal;
 
         private static HarmonyMethod hasStatusTagTranspiler;
-        private static HarmonyMethod btUpdatePrefix;
         private static HarmonyMethod pumpUpdateTranspiler;
         private static MethodInfo itemUpdateOriginal;
         private static HarmonyMethod itemUpdateTranspiler;
+        private static HarmonyMethod componentDispatchTranspiler;
 
         // Partial methods for platform-specific initialization
         partial void InitializeClient();
@@ -82,19 +81,20 @@ namespace ItemOptimizerMod
             if (OptimizerConfig.SignalGraphMode > 0)
                 SignalGraphPatches.Register(harmony);
 
-            // MotionSensor/WaterDetector complete rewrites
+            // MotionSensor/WaterDetector complete rewrites — now dispatched via ComponentDispatchTranspiler
+            // Just log, no individual Harmony prefix registration needed
             if (OptimizerConfig.EnableMotionSensorRewrite)
-                MotionSensorRewrite.Register(harmony);
+                LuaCsLogger.Log("[ItemOptimizer] MotionSensorRewrite: dispatch via ComponentDispatchTranspiler");
             if (OptimizerConfig.EnableWaterDetectorRewrite)
-                WaterDetectorRewrite.Register(harmony);
+                LuaCsLogger.Log("[ItemOptimizer] WaterDetectorRewrite: dispatch via ComponentDispatchTranspiler");
 
-            // Power system rewrites
+            // Power system rewrites — initialize delegates, dispatched via ComponentDispatchTranspiler
             if (OptimizerConfig.EnableRelayRewrite)
-                RelayRewrite.Register(harmony);
+                RelayRewrite.Init();
             if (OptimizerConfig.EnablePowerTransferRewrite)
-                PowerTransferRewrite.Register(harmony);
+                PowerTransferRewrite.Init();
             if (OptimizerConfig.EnablePowerContainerRewrite)
-                PowerContainerRewrite.Register(harmony);
+                LuaCsLogger.Log("[ItemOptimizer] PowerContainerRewrite: dispatch via ComponentDispatchTranspiler");
 
             // Character stagger — enemy AI load distribution (shared: both server and client)
             if (OptimizerConfig.EnableCharacterStagger)
@@ -237,16 +237,11 @@ namespace ItemOptimizerMod
             CharacterStaggerPatch.Unregister(harmony);
             CharacterZoneSkipPatch.Unregister(harmony);
             MotionSensorRewrite.Reset();
-            MotionSensorRewrite.Unregister(harmony);
             HullCharacterTracker.Reset();
             WaterDetectorRewrite.Reset();
-            WaterDetectorRewrite.Unregister(harmony);
             RelayRewrite.Reset();
-            RelayRewrite.Unregister(harmony);
             PowerTransferRewrite.Reset();
-            PowerTransferRewrite.Unregister(harmony);
             PowerContainerRewrite.Reset();
-            PowerContainerRewrite.Unregister(harmony);
             SignalGraphEvaluator.Reset();
             SignalGraphPatches.Unregister(harmony);
             UpdateAllTakeover.Unregister(harmony);
@@ -263,8 +258,6 @@ namespace ItemOptimizerMod
 
             hasStatusTagTranspiler = new HarmonyMethod(AccessTools.Method(typeof(HasStatusTagCachePatch), nameof(HasStatusTagCachePatch.Transpiler)));
 
-            btUpdateOriginal = AccessTools.Method(typeof(ButtonTerminal), nameof(ButtonTerminal.Update));
-            btUpdatePrefix = new HarmonyMethod(AccessTools.Method(typeof(ButtonTerminalPatch), nameof(ButtonTerminalPatch.Prefix)));
             pumpUpdateOriginal = AccessTools.Method(typeof(Pump), nameof(Pump.Update));
             pumpUpdateTranspiler = new HarmonyMethod(AccessTools.Method(typeof(PumpPatch), nameof(PumpPatch.Transpiler)));
 
@@ -272,6 +265,9 @@ namespace ItemOptimizerMod
                 new[] { typeof(float), typeof(Camera) });
             if (ItemUpdateTranspiler.CanPatch)
                 itemUpdateTranspiler = new HarmonyMethod(AccessTools.Method(typeof(ItemUpdateTranspiler), nameof(ItemUpdateTranspiler.Transpiler)));
+
+            if (ComponentDispatchTranspiler.CanPatch)
+                componentDispatchTranspiler = new HarmonyMethod(AccessTools.Method(typeof(ComponentDispatchTranspiler), nameof(ComponentDispatchTranspiler.Transpiler)));
         }
 
         private static void ApplyPatches()
@@ -280,14 +276,18 @@ namespace ItemOptimizerMod
             // This avoids per-call Harmony dispatch overhead for non-HasStatusTag Matches calls.
             if (hasStatusTagOriginal != null)
                 harmony.Patch(hasStatusTagOriginal, transpiler: hasStatusTagTranspiler);
-            if (OptimizerConfig.EnableButtonTerminalOpt && btUpdateOriginal != null)
-                harmony.Patch(btUpdateOriginal, prefix: btUpdatePrefix);
+            // ButtonTerminal — now dispatched via ComponentDispatchTranspiler, no individual patch needed
             if (OptimizerConfig.EnablePumpOpt && pumpUpdateOriginal != null)
                 harmony.Patch(pumpUpdateOriginal, transpiler: pumpUpdateTranspiler);
             // Item.Update transpiler: wraps ApplyStatusEffects with hasStatusEffectsOfType[] check.
             // Always applied (like HasStatusTagCache) — the wrapper is a no-op when effects exist.
             if (itemUpdateOriginal != null && itemUpdateTranspiler != null)
                 harmony.Patch(itemUpdateOriginal, transpiler: itemUpdateTranspiler);
+            // Component dispatch transpiler: replaces component.Update/UpdateBroken callvirts
+            // with unified DispatchUpdate that routes to optimized implementations.
+            // Must be applied AFTER ItemUpdateTranspiler (Harmony chains transpilers).
+            if (itemUpdateOriginal != null && componentDispatchTranspiler != null)
+                harmony.Patch(itemUpdateOriginal, transpiler: componentDispatchTranspiler);
         }
 
         // ── Toggle support (called from GUI) ──
@@ -317,26 +317,15 @@ namespace ItemOptimizerMod
                 case "motion_rewrite":
                 {
                     bool enable = value > 0;
-                    // Validate: turning OFF may cascade-disable NativeRuntime
                     var cascades = ToggleValidator.ValidateChange("motion_rewrite", enable);
-                    if (cascades == null) break; // blocked
-                    // Apply cascades before the actual change
+                    if (cascades == null) break;
                     foreach (var (t, v) in cascades)
                         SetStrategyValue(t, v ? 1 : 0);
-
                     OptimizerConfig.EnableMotionSensorRewrite = enable;
-                    if (enable)
-                        MotionSensorRewrite.Register(harmony);
-                    else
-                        MotionSensorRewrite.Unregister(harmony);
                     break;
                 }
                 case "water_det_rewrite":
                     OptimizerConfig.EnableWaterDetectorRewrite = value > 0;
-                    if (value > 0)
-                        WaterDetectorRewrite.Register(harmony);
-                    else
-                        WaterDetectorRewrite.Unregister(harmony);
                     break;
                 case "anim_lod":
                     OptimizerConfig.EnableAnimLOD = value > 0;
@@ -374,32 +363,14 @@ namespace ItemOptimizerMod
                     break;
                 case "relay_rewrite":
                     OptimizerConfig.EnableRelayRewrite = value > 0;
-                    if (value > 0)
-                        RelayRewrite.Register(harmony);
-                    else
-                        RelayRewrite.Unregister(harmony);
+                    if (value > 0) RelayRewrite.Init();
                     break;
                 case "power_transfer_rewrite":
                     OptimizerConfig.EnablePowerTransferRewrite = value > 0;
-                    if (value > 0)
-                    {
-                        PowerTransferRewrite.Register(harmony);
-                    }
-                    else
-                    {
-                        PowerTransferRewrite.Unregister(harmony);
-                    }
+                    if (value > 0) PowerTransferRewrite.Init();
                     break;
                 case "power_container_rewrite":
                     OptimizerConfig.EnablePowerContainerRewrite = value > 0;
-                    if (value > 0)
-                    {
-                        PowerContainerRewrite.Register(harmony);
-                    }
-                    else
-                    {
-                        PowerContainerRewrite.Unregister(harmony);
-                    }
                     break;
                 case "native_runtime":
                 {

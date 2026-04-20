@@ -144,7 +144,7 @@ namespace ItemOptimizerMod
             catch (Exception e)
             {
                 // Don't crash the server for metrics
-                LuaCsLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
+                SafeLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
             }
         }
 

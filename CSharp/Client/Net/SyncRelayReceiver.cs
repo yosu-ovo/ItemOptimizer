@@ -29,7 +29,7 @@ namespace ItemOptimizerMod
             }
             catch (Exception e)
             {
-                LuaCsLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
+                SafeLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
             }
         }
 
@@ -94,7 +94,7 @@ namespace ItemOptimizerMod
             }
             catch (Exception e)
             {
-                LuaCsLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
+                SafeLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
             }
         }
 

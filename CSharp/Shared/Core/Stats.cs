@@ -35,6 +35,10 @@ namespace ItemOptimizerMod
         internal static int ZoneCharSkips;
         internal static int ZoneManagedItems;
 
+        // ── Component dispatch (transpiler-based skip) ──
+        internal static int ComponentSkips;
+        internal static int InertComponentSkips;
+
         // ── Total dispatch wall time (entire UpdateAllPrefix) ──
         internal static float TotalDispatchMs;
 
@@ -85,6 +89,10 @@ namespace ItemOptimizerMod
         internal static float AvgZoneSkips;
         internal static float AvgZonePassiveSkips;
         internal static float AvgZoneCharSkips;
+
+        // ── Component dispatch averages ──
+        internal static float AvgComponentSkips;
+        internal static float AvgInertComponentSkips;
 
         // ── Total dispatch average ──
         internal static float AvgTotalDispatchMs;
@@ -137,6 +145,10 @@ namespace ItemOptimizerMod
             AvgZoneSkips = AvgZoneSkips * (1f - Smoothing) + ZoneSkips * Smoothing;
             AvgZonePassiveSkips = AvgZonePassiveSkips * (1f - Smoothing) + ZonePassiveSkips * Smoothing;
             AvgZoneCharSkips = AvgZoneCharSkips * (1f - Smoothing) + ZoneCharSkips * Smoothing;
+
+            // Component dispatch EMA
+            AvgComponentSkips = AvgComponentSkips * (1f - Smoothing) + ComponentSkips * Smoothing;
+            AvgInertComponentSkips = AvgInertComponentSkips * (1f - Smoothing) + InertComponentSkips * Smoothing;
 
             // Per-phase diagnostic EMA
             AvgPhaseAMs = AvgPhaseAMs * (1f - Smoothing) + PhaseAMs * Smoothing;
@@ -201,6 +213,8 @@ namespace ItemOptimizerMod
             ZoneSkips = 0;
             ZonePassiveSkips = 0;
             ZoneCharSkips = 0;
+            ComponentSkips = 0;
+            InertComponentSkips = 0;
             TotalDispatchMs = 0;
             PhaseAMs = 0;
             PhaseBMs = 0;
@@ -226,6 +240,7 @@ namespace ItemOptimizerMod
         internal const float CostCharStagger    = 0.01f;    // ~10μs AI tick
         internal const float CostZoneSkip       = 0.001f;   // ~1μs mixed item
         internal const float CostSignalGraph    = 0.003f;   // ~3μs per accel node
+        internal const float CostComponentSkip  = 0.0008f;  // ~0.8μs component update
 
         internal static float EstimatedSavedMs()
         {
@@ -241,7 +256,8 @@ namespace ItemOptimizerMod
                  + AvgAnimLODHalfRate       * CostAnimLODHalf
                  + AvgCharStaggerSkipped    * CostCharStagger
                  + AvgZoneSkips             * CostZoneSkip
-                 + AvgSignalGraphAccelSkips * CostSignalGraph;
+                 + AvgSignalGraphAccelSkips * CostSignalGraph
+                 + (AvgComponentSkips + AvgInertComponentSkips) * CostComponentSkip;
         }
 
         internal static void Reset()
@@ -280,6 +296,8 @@ namespace ItemOptimizerMod
             AvgZoneSkips = 0;
             AvgZonePassiveSkips = 0;
             AvgZoneCharSkips = 0;
+            AvgComponentSkips = 0;
+            AvgInertComponentSkips = 0;
             AvgTotalDispatchMs = 0;
             AvgPhaseAMs = 0;
             AvgPhaseBMs = 0;

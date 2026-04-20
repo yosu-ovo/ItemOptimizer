@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using Barotrauma;
 using Barotrauma.Items.Components;
@@ -64,31 +63,7 @@ namespace ItemOptimizerMod.Patches
         }
         private static readonly SignalCache[] CachedSignals = new SignalCache[65536];
 
-        private static MethodInfo _originalMethod;
-        private static HarmonyMethod _prefixMethod;
-        internal static bool IsRegistered { get; private set; }
-
-        internal static void Register(Harmony harmony)
-        {
-            _originalMethod = AccessTools.Method(typeof(PowerContainer), nameof(PowerContainer.Update));
-            if (_originalMethod == null)
-            {
-                LuaCsLogger.LogError("[ItemOptimizer] PowerContainerRewrite: could not find PowerContainer.Update");
-                return;
-            }
-
-            _prefixMethod = new HarmonyMethod(AccessTools.Method(typeof(PowerContainerRewrite), nameof(Prefix)));
-            harmony.Patch(_originalMethod, prefix: _prefixMethod);
-            IsRegistered = true;
-            LuaCsLogger.Log("[ItemOptimizer] PowerContainerRewrite registered");
-        }
-
-        internal static void Unregister(Harmony harmony)
-        {
-            if (_originalMethod != null && _prefixMethod != null)
-                harmony.Unpatch(_originalMethod, _prefixMethod.method);
-            IsRegistered = false;
-        }
+        internal static bool IsRegistered => true; // dispatched via ComponentDispatchTranspiler
 
         internal static void Reset()
         {
@@ -142,15 +117,19 @@ namespace ItemOptimizerMod.Patches
                 item.SendSignal(str, fallbackName);
         }
 
-        public static bool Prefix(PowerContainer __instance, float deltaTime)
+        internal static void Execute(PowerContainer __instance, float deltaTime)
         {
-            if (!OptimizerConfig.EnablePowerContainerRewrite) return true;
+            if (!OptimizerConfig.EnablePowerContainerRewrite)
+            {
+                __instance.Update(deltaTime, null);
+                return;
+            }
 
             var item = __instance.item;
             if (item.Connections == null)
             {
                 __instance.IsActive = false;
-                return false;
+                return;
             }
 
             int id = item.ID;
@@ -202,7 +181,7 @@ namespace ItemOptimizerMod.Patches
 
             sc.Initialized = true;
 
-            return false;
+            return;
         }
     }
 }

@@ -10,7 +10,7 @@ using Microsoft.Xna.Framework;
 namespace ItemOptimizerMod.Patches
 {
     /// <summary>
-    /// Complete replacement for PowerTransfer.Update() via Harmony Prefix.
+    /// Complete replacement for PowerTransfer.Update() via component dispatch.
     /// Targets JunctionBox and other non-Relay PowerTransfer components.
     ///
     /// Key optimizations vs vanilla:
@@ -65,11 +65,12 @@ namespace ItemOptimizerMod.Patches
         }
         private static readonly ConnCache[] CachedConns = new ConnCache[65536];
 
-        private static MethodInfo _originalMethod;
-        private static HarmonyMethod _prefixMethod;
-        internal static bool IsRegistered { get; private set; }
+        internal static bool IsRegistered => true; // dispatched via ComponentDispatchTranspiler
 
-        internal static void Register(Harmony harmony)
+        /// <summary>
+        /// Initialize delegate accessors for protected methods. Called once at plugin init.
+        /// </summary>
+        internal static void Init()
         {
             var refreshMethod = AccessTools.Method(typeof(PowerTransfer), "RefreshConnections");
             var dirtyMethod = AccessTools.Method(typeof(PowerTransfer), "SetAllConnectionsDirty");
@@ -84,25 +85,7 @@ namespace ItemOptimizerMod.Patches
                 typeof(Action<PowerTransfer>), refreshMethod);
             _setAllConnectionsDirty = (Action<PowerTransfer>)Delegate.CreateDelegate(
                 typeof(Action<PowerTransfer>), dirtyMethod);
-
-            _originalMethod = AccessTools.Method(typeof(PowerTransfer), nameof(PowerTransfer.Update));
-            if (_originalMethod == null)
-            {
-                LuaCsLogger.LogError("[ItemOptimizer] PowerTransferRewrite: could not find PowerTransfer.Update");
-                return;
-            }
-
-            _prefixMethod = new HarmonyMethod(AccessTools.Method(typeof(PowerTransferRewrite), nameof(Prefix)));
-            harmony.Patch(_originalMethod, prefix: _prefixMethod);
-            IsRegistered = true;
-            LuaCsLogger.Log("[ItemOptimizer] PowerTransferRewrite registered");
-        }
-
-        internal static void Unregister(Harmony harmony)
-        {
-            if (_originalMethod != null && _prefixMethod != null)
-                harmony.Unpatch(_originalMethod, _prefixMethod.method);
-            IsRegistered = false;
+            LuaCsLogger.Log("[ItemOptimizer] PowerTransferRewrite initialized");
         }
 
         internal static void Reset()
@@ -151,12 +134,20 @@ namespace ItemOptimizerMod.Patches
                 item.SendSignal(signal, fallbackName);
         }
 
-        public static bool Prefix(PowerTransfer __instance, float deltaTime)
+        internal static void Execute(PowerTransfer __instance, float deltaTime)
         {
-            if (!OptimizerConfig.EnablePowerTransferRewrite) return true;
+            if (!OptimizerConfig.EnablePowerTransferRewrite)
+            {
+                __instance.Update(deltaTime, null);
+                return;
+            }
 
-            // RelayComponent has its own override and rewrite — don't intercept it here
-            if (__instance is RelayComponent) return true;
+            // RelayComponent has its own rewrite — don't intercept it here
+            if (__instance is RelayComponent)
+            {
+                __instance.Update(deltaTime, null);
+                return;
+            }
 
             var item = __instance.item;
 
@@ -174,7 +165,7 @@ namespace ItemOptimizerMod.Patches
                     extraLoad = Math.Min(extraLoad + 1000.0f * deltaTime, 0);
             }
 
-            if (!__instance.CanTransfer) return false;
+            if (!__instance.CanTransfer) return;
 
             // isBroken check
             ref bool isBroken = ref Ref_isBroken(__instance);
@@ -281,7 +272,7 @@ namespace ItemOptimizerMod.Patches
                 __instance.Overload = false;
             }
 
-            return false;
+            return;
         }
     }
 }

@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using Barotrauma;
 using Barotrauma.Items.Components;
@@ -59,11 +57,12 @@ namespace ItemOptimizerMod.Patches
         }
         private static readonly SignalCache[] CachedSignals = new SignalCache[65536];
 
-        private static MethodInfo _originalMethod;
-        private static HarmonyMethod _prefixMethod;
-        internal static bool IsRegistered { get; private set; }
+        internal static bool IsRegistered => true; // dispatched via ComponentDispatchTranspiler
 
-        internal static void Register(Harmony harmony)
+        /// <summary>
+        /// Initialize delegate accessors for protected methods. Called once at plugin init.
+        /// </summary>
+        internal static void Init()
         {
             var refreshMethod = AccessTools.Method(typeof(PowerTransfer), "RefreshConnections");
             var dirtyMethod = AccessTools.Method(typeof(PowerTransfer), "SetAllConnectionsDirty");
@@ -78,25 +77,7 @@ namespace ItemOptimizerMod.Patches
                 typeof(Action<RelayComponent>), refreshMethod);
             _setAllConnectionsDirty = (Action<RelayComponent>)Delegate.CreateDelegate(
                 typeof(Action<RelayComponent>), dirtyMethod);
-
-            _originalMethod = AccessTools.Method(typeof(RelayComponent), nameof(RelayComponent.Update));
-            if (_originalMethod == null)
-            {
-                LuaCsLogger.LogError("[ItemOptimizer] RelayRewrite: could not find RelayComponent.Update");
-                return;
-            }
-
-            _prefixMethod = new HarmonyMethod(AccessTools.Method(typeof(RelayRewrite), nameof(Prefix)));
-            harmony.Patch(_originalMethod, prefix: _prefixMethod);
-            IsRegistered = true;
-            LuaCsLogger.Log("[ItemOptimizer] RelayRewrite registered");
-        }
-
-        internal static void Unregister(Harmony harmony)
-        {
-            if (_originalMethod != null && _prefixMethod != null)
-                harmony.Unpatch(_originalMethod, _prefixMethod.method);
-            IsRegistered = false;
+            LuaCsLogger.Log("[ItemOptimizer] RelayRewrite initialized");
         }
 
         internal static void Reset()
@@ -145,9 +126,13 @@ namespace ItemOptimizerMod.Patches
             }
         }
 
-        public static bool Prefix(RelayComponent __instance, float deltaTime)
+        internal static void Execute(RelayComponent __instance, float deltaTime)
         {
-            if (!OptimizerConfig.EnableRelayRewrite) return true;
+            if (!OptimizerConfig.EnableRelayRewrite)
+            {
+                __instance.Update(deltaTime, null);
+                return;
+            }
 
             var item = __instance.item;
             int id = item.ID;
@@ -247,7 +232,7 @@ namespace ItemOptimizerMod.Patches
                 __instance.Overload = false;
             }
 
-            return false;
+            return;
         }
     }
 }

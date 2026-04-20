@@ -21,6 +21,7 @@ namespace ItemOptimizerMod
             UpdateAllTakeover.OnPostUpdate = MetricRelaySender.OnPostUpdate;
 
             // Register sync command handler (client requests sync recording)
+            // Register sync config handler (client toggles AllowClientSync in UI)
             try
             {
                 var networking = LuaCsSetup.Instance?.Networking;
@@ -29,10 +30,15 @@ namespace ItemOptimizerMod
                     if (args.Length > 0 && args[0] is IReadMessage msg)
                         OnSyncCommand(msg);
                 });
+                networking?.Receive("ItemOpt.SyncCfg", (object[] args) =>
+                {
+                    if (args.Length > 0 && args[0] is IReadMessage msg)
+                        OnSyncCfgReceived(msg);
+                });
             }
             catch (Exception e)
             {
-                LuaCsLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
+                SafeLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
             }
 
             LuaCsLogger.Log("[ItemOptimizer] Server components initialized " +
@@ -46,7 +52,7 @@ namespace ItemOptimizerMod
             {
                 if (!OptimizerConfig.AllowClientSync)
                 {
-                    LuaCsLogger.Log("[ItemOptimizer] Sync command rejected: AllowClientSync is disabled");
+                    LuaCsLogger.Log("[ItemOptimizer] Sync command rejected: AllowClientSync is disabled on server");
                     return;
                 }
                 int frames = msg.ReadUInt16();
@@ -54,7 +60,21 @@ namespace ItemOptimizerMod
             }
             catch (Exception e)
             {
-                LuaCsLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
+                SafeLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
+            }
+        }
+
+        private static void OnSyncCfgReceived(IReadMessage msg)
+        {
+            try
+            {
+                bool allow = msg.ReadBoolean();
+                OptimizerConfig.AllowClientSync = allow;
+                LuaCsLogger.Log($"[ItemOptimizer] AllowClientSync set to {allow} by client");
+            }
+            catch (Exception e)
+            {
+                SafeLogger.HandleException(e, LuaCsMessageOrigin.CSharpMod);
             }
         }
 

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using Barotrauma;
 using Barotrauma.Items.Components;
@@ -60,9 +59,7 @@ namespace ItemOptimizerMod.Patches
         }
         private static readonly SensorSpatialCache[] _spatialCache = new SensorSpatialCache[65536];
 
-        private static MethodInfo _originalMethod;
-        private static HarmonyMethod _prefixMethod;
-        internal static bool IsRegistered { get; private set; }
+        internal static bool IsRegistered => true; // dispatched via ComponentDispatchTranspiler
 
         /// <summary>Trace mode: when > 0, log detection details for each sensor update. Decremented per frame.</summary>
         internal static int TraceFrames;
@@ -71,24 +68,14 @@ namespace ItemOptimizerMod.Patches
 
         internal static void Register(Harmony harmony)
         {
-            _originalMethod = AccessTools.Method(typeof(MotionSensor), nameof(MotionSensor.Update));
-            if (_originalMethod == null)
-            {
-                LuaCsLogger.LogError("[ItemOptimizer] MotionSensorRewrite: could not find MotionSensor.Update");
-                return;
-            }
-
-            _prefixMethod = new HarmonyMethod(AccessTools.Method(typeof(MotionSensorRewrite), nameof(Prefix)));
-            harmony.Patch(_originalMethod, prefix: _prefixMethod);
-            IsRegistered = true;
-            LuaCsLogger.Log("[ItemOptimizer] MotionSensorRewrite registered");
+            // No longer registers a Harmony prefix — dispatched via ComponentDispatchTranspiler.
+            // Kept for backward compatibility with external callers (toggle system).
+            LuaCsLogger.Log("[ItemOptimizer] MotionSensorRewrite: dispatch via ComponentDispatchTranspiler");
         }
 
         internal static void Unregister(Harmony harmony)
         {
-            if (_originalMethod != null && _prefixMethod != null)
-                harmony.Unpatch(_originalMethod, _prefixMethod.method);
-            IsRegistered = false;
+            // No-op: no individual Harmony patch to remove.
         }
 
         /// <summary>Reset cached state (called on round end / mod reload).</summary>
@@ -325,17 +312,14 @@ namespace ItemOptimizerMod.Patches
 
         /// <summary>
         /// Complete replacement for MotionSensor.Update().
-        /// Returns false to skip the original method.
+        /// Called from ComponentDispatchTranspiler.DispatchUpdate.
         /// </summary>
-        public static bool Prefix(MotionSensor __instance, float deltaTime)
+        internal static void Execute(MotionSensor __instance, float deltaTime)
         {
-            // NativeRuntime bypass — when managed by NativeRuntime, skip Prefix entirely.
-            // NativeRuntime has its own independent tick hook (postfix on MapEntity.UpdateAll)
-            // that ensures Tick() runs even when UpdateAllTakeover is OFF.
+            // NativeRuntime bypass
             if (IsNativeManaged[__instance.item.ID])
             {
-                if (NativeRuntimeBridge.IsEnabled) return false;
-                // Runtime disabled mid-round — fall through to rewrite/vanilla
+                if (NativeRuntimeBridge.IsEnabled) return;
             }
 
             if (!OptimizerConfig.EnableMotionSensorRewrite)
@@ -345,7 +329,8 @@ namespace ItemOptimizerMod.Patches
                     TraceFrames--;
                     DebugConsole.NewMessage($"[TRACE] Rewrite OFF — vanilla will run for sensor ID={__instance.item.ID}", Color.Orange);
                 }
-                return true;
+                __instance.Update(deltaTime, null);
+                return;
             }
 
             var item = __instance.item;
@@ -386,7 +371,7 @@ namespace ItemOptimizerMod.Patches
                             Color.Gray);
                     }
                     Stats.MotionSensorSkips++;
-                    return false;
+                    return;
                 }
 
                 // Quick detect with spatial filtering
@@ -403,7 +388,7 @@ namespace ItemOptimizerMod.Patches
                 }
 
                 Stats.MotionSensorSkips++;
-                return false;
+                return;
             }
 
             // ── 3. Full scan frame ──
@@ -418,7 +403,7 @@ namespace ItemOptimizerMod.Patches
                     Math.Abs(item.body.LinearVelocity.Y) > __instance.MinimumVelocity)
                 {
                     __instance.MotionDetected = true;
-                    return false;
+                    return;
                 }
             }
 
@@ -444,7 +429,7 @@ namespace ItemOptimizerMod.Patches
                         if (cell.IsPointInside(item.WorldPosition))
                         {
                             __instance.MotionDetected = true;
-                            return false;
+                            return;
                         }
                         foreach (var edge in cell.Edges)
                         {
@@ -456,7 +441,7 @@ namespace ItemOptimizerMod.Patches
                                 MathUtils.LineSegmentsIntersect(e1, e2, new Vector2(detectRect.Right, detectRect.Y), new Vector2(detectRect.Right, detectRect.Bottom)))
                             {
                                 __instance.MotionDetected = true;
-                                return false;
+                                return;
                             }
                         }
                     }
@@ -483,7 +468,7 @@ namespace ItemOptimizerMod.Patches
                             if (wall.Submarine == sub && wall.WorldRect.Intersects(detectRect))
                             {
                                 __instance.MotionDetected = true;
-                                return false;
+                                return;
                             }
                         }
                     }
@@ -495,7 +480,7 @@ namespace ItemOptimizerMod.Patches
             bool trigPets = Ref_triggerFromPets(__instance);
             bool trigMonsters = Ref_triggerFromMonsters(__instance);
             bool hasTriggers = trigHumans || trigPets || trigMonsters;
-            if (!hasTriggers) return false;
+            if (!hasTriggers) return;
 
             var targetChars = Ref_targetCharacters(__instance);
             float minVelSq = __instance.MinimumVelocity * __instance.MinimumVelocity;
@@ -523,7 +508,7 @@ namespace ItemOptimizerMod.Patches
                         trigHumans, trigPets, trigMonsters, targetChars))
                     {
                         __instance.MotionDetected = true;
-                        return false;
+                        return;
                     }
                 }
 
@@ -584,7 +569,7 @@ namespace ItemOptimizerMod.Patches
                             ConvertUnits.ToDisplayUnits(limb.body.GetMaxExtent()), detectRect))
                         {
                             __instance.MotionDetected = true;
-                            return false;
+                            return;
                         }
                     }
                 }
@@ -636,7 +621,7 @@ namespace ItemOptimizerMod.Patches
                             ConvertUnits.ToDisplayUnits(limb.body.GetMaxExtent()), detectRect))
                         {
                             __instance.MotionDetected = true;
-                            return false;
+                            return;
                         }
                     }
                 }
@@ -660,7 +645,7 @@ namespace ItemOptimizerMod.Patches
                     __instance.MotionDetected ? Color.LimeGreen : Color.Red);
             }
 
-            return false;
+            return;
         }
 
         /// <summary>

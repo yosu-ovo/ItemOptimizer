@@ -20,16 +20,19 @@ namespace ItemOptimizerMod.Patches
         private static readonly AccessTools.FieldRef<ButtonTerminal, ItemContainer> Ref_container =
             AccessTools.FieldRefAccess<ButtonTerminal, ItemContainer>("<Container>k__BackingField");
 
-        public static bool Prefix(ButtonTerminal __instance, float deltaTime)
+        internal static void Execute(ButtonTerminal __instance, float deltaTime)
         {
-            if (!OptimizerConfig.EnableButtonTerminalOpt) return true;
+            if (!OptimizerConfig.EnableButtonTerminalOpt)
+            {
+                __instance.Update(deltaTime, null);
+                return;
+            }
 
             // Replicate base.Update() → ApplyStatusEffects(OnActive, deltaTime)
             __instance.ApplyStatusEffects(ActionType.OnActive, deltaTime);
 
             bool activated = IsActivatedFast(__instance);
             __instance.item.SendSignal(activated ? "1" : "0", "state_out");
-            return false;
         }
 
         /// <summary>
