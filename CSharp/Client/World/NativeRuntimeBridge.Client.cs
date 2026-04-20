@@ -6,7 +6,7 @@ namespace ItemOptimizerMod.World
 {
     /// <summary>
     /// Client-side partial: registers visual NativeComponents (LightNativeComponent etc.)
-    /// into the Zone system during OnRoundStart.
+    /// into the Zone system during OnRoundStart and for hot-loaded zones.
     /// </summary>
     internal static partial class NativeRuntimeBridge
     {
@@ -48,6 +48,29 @@ namespace ItemOptimizerMod.World
 
             if (lightCount > 0)
                 LuaCsLogger.Log($"[ItemOptimizer] NativeRuntime: {lightCount} proxy_light items registered as LightNativeComponent");
+        }
+
+        static partial void RegisterClientComponentsForZone(SubmarineZone zone, Submarine sub)
+        {
+            if (Runtime == null || sub == null) return;
+
+            int lightCount = 0;
+            foreach (var item in Item.ItemList)
+            {
+                if (item == null || item.Removed || item.Submarine != sub) continue;
+                if (item.Prefab?.Identifier.Value != "proxy_light") continue;
+
+                var light = item.GetComponent<LightComponent>();
+                if (light == null) continue;
+
+                var native = new LightNativeComponent(light, item);
+                Runtime.Register(native, zone);
+                IsZoneManaged[item.ID] = true;
+                lightCount++;
+            }
+
+            if (lightCount > 0)
+                LuaCsLogger.Log($"[ItemOptimizer] Zone hot-load: {lightCount} proxy_light registered for {sub.Info?.Name ?? "?"}");
         }
     }
 }

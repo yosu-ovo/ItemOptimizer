@@ -103,6 +103,10 @@ namespace ItemOptimizerMod.World
             if (ItemOptimizerPlugin.harmony != null)
                 RegisterTickHook(ItemOptimizerPlugin.harmony);
 
+            // Register submarine lifecycle patches (hot-load zones for late-spawned subs)
+            if (ItemOptimizerPlugin.harmony != null)
+                SubmarineZonePatch.Register(ItemOptimizerPlugin.harmony);
+
             // Build diagnostic string
             var sb = new StringBuilder();
             sb.Append($"{_registeredSensors.Count} sensors in {Runtime.Graph.Zones.Count} zones");
@@ -159,6 +163,10 @@ namespace ItemOptimizerMod.World
             if (ItemOptimizerPlugin.harmony != null)
                 UnregisterTickHook(ItemOptimizerPlugin.harmony);
 
+            // Unregister submarine lifecycle patches
+            if (ItemOptimizerPlugin.harmony != null)
+                SubmarineZonePatch.Unregister(ItemOptimizerPlugin.harmony);
+
             for (int i = 0; i < _registeredSensors.Count; i++)
                 Runtime.Unregister(_registeredSensors[i]);
             _registeredSensors.Clear();
@@ -174,8 +182,82 @@ namespace ItemOptimizerMod.World
 
         internal static void Tick(float deltaTime, Camera cam)
         {
+            DrainSubmarineEvents();
             Runtime?.Tick(deltaTime, cam);
             RefreshSubZoneTiers();
+        }
+
+        // ═══ Late submarine hot-loading ═══
+
+        private static void DrainSubmarineEvents()
+        {
+            if (Runtime == null) return;
+
+            // Remove first (before create) — prevents stale zone on ID reuse
+            while (SubmarineZonePatch.PendingRemoved.TryDequeue(out var sub))
+                HandleSubmarineRemoved(sub);
+
+            while (SubmarineZonePatch.PendingCreated.TryDequeue(out var sub))
+                HandleSubmarineCreated(sub);
+        }
+
+        private static void HandleSubmarineCreated(Submarine sub)
+        {
+            if (sub == null || sub.Removed) return;
+
+            // Guard: already has a zone
+            for (int i = 0; i < Runtime.Graph.Zones.Count; i++)
+            {
+                if (Runtime.Graph.Zones[i] is SubmarineZone sz && sz.Submarine == sub)
+                    return;
+            }
+
+            var zone = Runtime.Graph.CreateSubmarineZone(sub);
+            int compCount = 0;
+
+            // Register MotionSensors on this submarine
+            foreach (var item in Item.ItemList)
+            {
+                if (item == null || item.Removed || item.Submarine != sub) continue;
+                var ms = item.GetComponent<MotionSensor>();
+                if (ms == null) continue;
+
+                var native = new MotionSensorNative(ms, item);
+                Runtime.Register(native, zone);
+                _registeredSensors.Add(native);
+                IsZoneManaged[item.ID] = true;
+                compCount++;
+            }
+
+            RegisterClientComponentsForZone(zone, sub);
+
+            LuaCsLogger.Log($"[ItemOptimizer] Zone hot-loaded: {sub.Info?.Name ?? "?"} ({compCount} sensors, zone {zone.Id})");
+        }
+
+        private static void HandleSubmarineRemoved(Submarine sub)
+        {
+            if (sub == null) return;
+
+            SubmarineZone target = null;
+            for (int i = 0; i < Runtime.Graph.Zones.Count; i++)
+            {
+                if (Runtime.Graph.Zones[i] is SubmarineZone sz && sz.Submarine == sub)
+                { target = sz; break; }
+            }
+            if (target == null) return;
+
+            // Unregister all components in this zone
+            for (int i = target.Components.Count - 1; i >= 0; i--)
+            {
+                var comp = target.Components[i];
+                if (comp.Host != null)
+                    IsZoneManaged[comp.Host.ID] = false;
+                _registeredSensors.Remove(comp as MotionSensorNative);
+                Runtime.Unregister(comp);
+            }
+
+            Runtime.Graph.RemoveZone(target);
+            LuaCsLogger.Log($"[ItemOptimizer] Zone removed: {sub.Info?.Name ?? "?"} (zone {target.Id})");
         }
 
         private static void RefreshSubZoneTiers()
@@ -229,6 +311,9 @@ namespace ItemOptimizerMod.World
 
         /// <summary>Client-only registration hook for visual NativeComponents.</summary>
         static partial void RegisterClientComponents();
+
+        /// <summary>Client-only registration hook for visual NativeComponents in a hot-loaded zone.</summary>
+        static partial void RegisterClientComponentsForZone(SubmarineZone zone, Submarine sub);
 
         /// <summary>
         /// Postfix on MapEntity.UpdateAll. Provides independent tick for NativeRuntime

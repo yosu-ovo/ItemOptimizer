@@ -6,28 +6,32 @@ namespace ItemOptimizerMod
 {
     /// <summary>
     /// Compatibility wrapper for LuaCsLogger.HandleException.
-    /// Older LuaCs builds lack HandleException(Exception, LuaCsMessageOrigin),
-    /// causing MissingMethodException at JIT time. This class uses a cached
-    /// delegate so the callsite never touches the missing method directly.
+    /// Dev LuaCs builds may lack the LuaCsMessageOrigin type entirely,
+    /// causing TypeLoadException at JIT time if it appears in ANY method
+    /// signature. This class uses pure reflection — zero compile-time
+    /// references to LuaCsMessageOrigin.
     /// </summary>
     internal static class SafeLogger
     {
         private static bool _resolved;
-        private static Action<Exception, LuaCsMessageOrigin> _handleException;
+        private static MethodInfo _handleExceptionMethod;
+        private static object _csharpModOrigin;
 
-        internal static void HandleException(Exception e, LuaCsMessageOrigin origin)
+        internal static void HandleException(Exception e)
         {
             if (!_resolved) Resolve();
 
-            if (_handleException != null)
+            if (_handleExceptionMethod != null && _csharpModOrigin != null)
             {
-                _handleException(e, origin);
+                try
+                {
+                    _handleExceptionMethod.Invoke(null, new object[] { e, _csharpModOrigin });
+                    return;
+                }
+                catch { /* fall through to fallback */ }
             }
-            else
-            {
-                // Fallback: log as error string
-                LuaCsLogger.LogError($"[ItemOptimizer] {e}");
-            }
+
+            LuaCsLogger.LogError($"[ItemOptimizer] {e}");
         }
 
         private static void Resolve()
@@ -35,22 +39,25 @@ namespace ItemOptimizerMod
             _resolved = true;
             try
             {
-                var method = typeof(LuaCsLogger).GetMethod(
+                // Resolve LuaCsMessageOrigin type by name — no compile-time dependency
+                var originType = typeof(LuaCsLogger).Assembly.GetType("Barotrauma.LuaCsMessageOrigin");
+                if (originType == null) return;
+
+                // Get CSharpMod enum value
+                _csharpModOrigin = Enum.Parse(originType, "CSharpMod");
+
+                // Get HandleException(Exception, LuaCsMessageOrigin) method
+                _handleExceptionMethod = typeof(LuaCsLogger).GetMethod(
                     "HandleException",
                     BindingFlags.Public | BindingFlags.Static,
                     null,
-                    new[] { typeof(Exception), typeof(LuaCsMessageOrigin) },
+                    new[] { typeof(Exception), originType },
                     null);
-
-                if (method != null)
-                {
-                    _handleException = (Action<Exception, LuaCsMessageOrigin>)
-                        Delegate.CreateDelegate(typeof(Action<Exception, LuaCsMessageOrigin>), method);
-                }
             }
             catch
             {
-                _handleException = null;
+                _handleExceptionMethod = null;
+                _csharpModOrigin = null;
             }
         }
     }
