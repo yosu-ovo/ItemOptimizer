@@ -68,6 +68,19 @@ namespace ItemOptimizerMod.SignalGraph
         private static Connection GetCBConnection(object cbConn)
             => (Connection)_cbConnConnField.GetValue(cbConn);
 
+        // ── Vanilla signal item identifiers (mode 1 whitelist) ──
+        private static readonly HashSet<string> KnownSignalItems = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "andcomponent", "orcomponent", "notcomponent",
+            "signalcheckcomponent", "greatercomponent", "equalscomponent",
+            "addercomponent", "subtractcomponent", "multiplycomponent", "dividecomponent",
+            "memorycomponent", "roundcomponent",
+            "relaycomponent", "delaycomponent",
+        };
+
+        private static bool IsKnownSignalItem(string identifier)
+            => identifier != null && KnownSignalItems.Contains(identifier);
+
         // ── Supported component types ──
         private static SignalNodeType? Classify(ItemComponent ic, int mode)
         {
@@ -155,6 +168,14 @@ namespace ItemOptimizerMod.SignalGraph
                     }
                 }
                 if (signalComp == null || !nodeType.HasValue) continue;
+
+                // Mode 1 (Stable): only accelerate vanilla signal items by identifier.
+                // Mods can add signal components to any item (e.g. Immersive Repairs adds
+                // GreaterComponent to OxygenGenerator) — accelerating those skips their
+                // Update() entirely. Hardcoded whitelist = guaranteed safe.
+                // Mode 2 (Aggressive): accelerate any item with a recognized signal component.
+                if (mode < 2 && !IsKnownSignalItem(item.Prefab?.Identifier.Value))
+                    continue;
 
                 candidates[item.ID] = (item, signalComp, nodeType.Value);
             }
